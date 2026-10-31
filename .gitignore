@@ -1,0 +1,7 @@
+certs/*.pem
+certs/*.srl
+.env
+*-access.jsonl
+wire_capture.bin
+__pycache__/
+node_modules/

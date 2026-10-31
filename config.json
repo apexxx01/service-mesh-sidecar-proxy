@@ -1,0 +1,8 @@
+{
+  "timeoutMs": 2000,
+  "blockedPaths": ["/admin", "/internal"],
+  "upstreams": [
+    {"id": "payments", "name": "Payments", "target": "http://127.0.0.1:9000", "prefix": "/", "drained": false},
+    {"id": "orders", "name": "Orders", "target": "http://127.0.0.1:9001", "prefix": "/orders", "drained": false}
+  ]
+}

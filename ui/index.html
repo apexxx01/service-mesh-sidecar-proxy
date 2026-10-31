@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini Envoy — sidecar log view</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  :root { --me-primary:#0F766E; --me-text:#1F2937; --me-error:#B42318; --me-warn:#B54708; --me-ok:#166534; --me-bg:#F8FAFC; }
+  body { background:var(--me-bg); color:var(--me-text); }
+  .navbar { background:var(--me-primary); }
+  .badge-status { font-weight:600; letter-spacing:.01em; }
+  .b-ok { background:#DCFCE7; color:var(--me-ok); border:1px solid var(--me-ok); }
+  .b-error { background:#FEE4E2; color:var(--me-error); border:1px solid var(--me-error); }
+  .b-warn { background:#FEF0C7; color:var(--me-warn); border:1px solid var(--me-warn); }
+  .b-block { background:#F3F4F6; color:#111827; border:1px solid #111827; }
+  .b-info { background:#E0F2FE; color:#075985; border:1px solid #075985; }
+  .stat { font-size:1.4rem; font-weight:700; }
+  tr[role=button] { cursor:pointer; }
+  /* phone width: stack each log row as a card (the PRD asks for stacked cards on phones) */
+  @media (max-width: 575.98px) {
+    table.log thead { display:none; }
+    table.log tr { display:block; margin-bottom:.75rem; border:1px solid #CBD5E1; border-radius:.5rem; background:#fff; }
+    table.log td { display:flex; justify-content:space-between; gap:1rem; border:0; padding:.35rem .75rem; }
+    table.log td::before { content:attr(data-label); font-weight:600; color:#475569; }
+  }
+</style>
+</head>
+<body>
+<nav class="navbar navbar-dark mb-3">
+  <div class="container-xl">
+    <span class="navbar-brand mb-0 h1">Mini Envoy <small class="opacity-75 fs-6">sidecar log view</small></span>
+    <span id="sidecarName" class="text-white-50 small"></span>
+  </div>
+</nav>
+
+<main class="container-xl pb-5">
+  <div id="alerts" role="status" aria-live="polite"></div>
+
+  <!-- overview -->
+  <section aria-labelledby="h-overview" class="mb-4">
+    <h2 id="h-overview" class="h5">Overview</h2>
+    <div class="row g-2" id="stats"></div>
+  </section>
+
+  <!-- upstream health + drain -->
+  <section aria-labelledby="h-up" class="mb-4">
+    <h2 id="h-up" class="h5">Upstreams</h2>
+    <div class="row g-3" id="upstreams" aria-live="polite"></div>
+  </section>
+
+  <!-- access log -->
+  <section aria-labelledby="h-log" class="mb-4">
+    <div class="d-flex flex-wrap align-items-end gap-2 mb-2">
+      <h2 id="h-log" class="h5 me-auto mb-0">Access log</h2>
+      <div>
+        <label for="q" class="form-label small mb-0">Search</label>
+        <input id="q" class="form-control form-control-sm" placeholder="path, method, upstream">
+      </div>
+      <div>
+        <label for="st" class="form-label small mb-0">Status</label>
+        <select id="st" class="form-select form-select-sm">
+          <option value="all">All</option><option value="ok">OK</option><option value="error">Error</option>
+          <option value="timeout">Timed out</option><option value="blocked">Blocked</option>
+          <option value="drained">Drained</option><option value="short_circuit">Breaker open</option>
+          <option value="denied">Denied</option>
+        </select>
+      </div>
+      <button id="refresh" class="btn btn-sm btn-primary" style="background:var(--me-primary);border-color:var(--me-primary)">Refresh</button>
+      <button id="export" class="btn btn-sm btn-outline-secondary">Export CSV</button>
+      <div class="form-check form-switch ms-1">
+        <input class="form-check-input" type="checkbox" id="auto" checked>
+        <label class="form-check-label small" for="auto">Auto-refresh</label>
+      </div>
+    </div>
+
+    <div id="empty" class="alert alert-secondary d-none">
+      No requests logged yet. Send a request through the sidecar to get started.
+      <button id="loadSample" class="btn btn-sm btn-outline-dark ms-2">Load sample data</button>
+    </div>
+    <div id="noresults" class="alert alert-secondary d-none">
+      No requests match these filters. <button id="resetFilters" class="btn btn-sm btn-outline-dark ms-2">Reset filters</button>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle bg-white log" id="logTable">
+        <thead class="table-light">
+          <tr><th>Time</th><th>Method</th><th>Path</th><th>Upstream</th><th>Result</th><th class="text-end">Latency</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="small text-muted"><span id="count">0</span> requests shown. Click a row for its detail.</div>
+    <div class="mt-2 d-flex gap-2 flex-wrap">
+      <button id="resetSample" class="btn btn-sm btn-outline-secondary">Reset to sample data</button>
+      <button id="clearLog" class="btn btn-sm btn-outline-danger">Clear log</button>
+    </div>
+  </section>
+
+  <!-- config + about -->
+  <div class="row g-3">
+    <section class="col-lg-6" aria-labelledby="h-cfg">
+      <h2 id="h-cfg" class="h5">Config</h2>
+      <pre id="cfg" class="bg-white border rounded p-3 small mb-0">loading…</pre>
+    </section>
+    <section class="col-lg-6" aria-labelledby="h-about">
+      <h2 id="h-about" class="h5">About this proxy</h2>
+      <div class="bg-white border rounded p-3 small">
+        <p><strong>Educational mock — not Envoy.</strong> The sidecar forwards plain HTTP to local mock services and logs every outcome. Latency is measured; health (Healthy or Down) comes from the last requests, not a real health probe.</p>
+        <ul class="mb-0">
+          <li><strong>Forward</strong>: GET and POST pass through with a timeout (504 if exceeded).</li>
+          <li><strong>Block</strong>: a path in <code>blockedPaths</code> gets 403 and is never forwarded.</li>
+          <li><strong>Drain</strong>: a drained upstream gets no new traffic; requests return 503 "drained".</li>
+          <li><strong>Bonus beyond the PRD</strong>: real mTLS between sidecars and a circuit breaker. Not used for production routing.</li>
+        </ul>
+      </div>
+    </section>
+  </div>
+</main>
+
+<!-- detail modal -->
+<div class="modal fade" id="detail" tabindex="-1" aria-labelledby="detailTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+    <div class="modal-header"><h2 class="modal-title h5" id="detailTitle">Request detail</h2>
+      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+    <div class="modal-body" id="detailBody"></div>
+  </div></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Same page works served by the sidecar (/__sidecar/logs) or as a static page: index.html?api=http://HOST:8001/__sidecar
+const API = new URLSearchParams(location.search).get('api') || '/__sidecar';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const OUT = {   // outcome -> [badge class, icon, label]; icon + text so status never relies on colour alone
+  ok:['b-ok','✔','OK'], upstream_5xx:['b-error','✖','Error'], upstream_down:['b-error','✖','Upstream down'],
+  timeout:['b-warn','⏱','Timed out'], blocked:['b-block','⛔','Blocked'], drained:['b-info','⏸','Drained'],
+  short_circuit:['b-warn','⚡','Breaker open'], denied:['b-block','⛔','Denied'], no_route:['b-error','✖','No route']
+};
+const group = e => (e.outcome === 'upstream_5xx' || e.outcome === 'upstream_down') ? 'error' : e.outcome;
+let logs = [], current = [];
+
+function banner(msg, kind = 'success') {
+  $('alerts').innerHTML = msg ? `<div class="alert alert-${kind} py-2">${esc(msg)}</div>` : '';
+  if (msg && kind === 'success') setTimeout(() => $('alerts').innerHTML = '', 4000);
+}
+const token = () => localStorage.getItem('me_token') || '';
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, opts);
+  if (r.status === 401) { const t = prompt('Admin token:'); if (t) { localStorage.setItem('me_token', t); return api(path, opts); } }
+  if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0, 120));
+  return r.json();
+}
+const post = (path, body = {}) => api(path, { method:'POST', headers:{'content-type':'application/json', ...(token() ? {authorization:'Bearer ' + token()} : {})}, body:JSON.stringify(body) });
+
+async function refresh() {
+  try {
+    const [l, h, s, c] = await Promise.all([api('/logs.json?limit=500'), api('/health'), api('/stats'), api('/config')]);
+    logs = l; $('sidecarName').textContent = h.sidecar;
+    if ($('alerts').textContent.includes('Cannot reach')) banner('');
+    renderStats(s); renderUpstreams(h); $('cfg').textContent = JSON.stringify(c, null, 2); render();
+  } catch (e) {
+    banner(`Cannot reach the sidecar at ${API}. Start it, check the address, then press Refresh. (${e.message})`, 'danger');
+  }
+}
+function renderStats(s) {
+  const items = [['Requests',s.requests],['Forwarded OK',s.ok],['Errors',s.upstream_errors],['Timeouts',s.timeouts],['Blocked',s.blocked],['Drained',s.drained]];
+  $('stats').innerHTML = items.map(([k, v]) => `<div class="col-6 col-md-2"><div class="bg-white border rounded p-2"><div class="small text-muted">${k}</div><div class="stat">${v}</div></div></div>`).join('');
+}
+function renderUpstreams(h) {
+  $('upstreams').innerHTML = h.upstreams.map(u => {
+    const down = u.health === 'Down';
+    return `<div class="col-md-6"><div class="bg-white border rounded p-3">
+      <div class="d-flex justify-content-between align-items-start">
+        <div><strong>${esc(u.name)}</strong><div class="small text-muted">${esc(u.target)}</div></div>
+        <span class="badge badge-status ${down ? 'b-error' : 'b-ok'}">${down ? '✖ Down' : '✔ Healthy'}</span>
+      </div>
+      <div class="small mt-2">Avg latency <strong>${u.avgLatencyMs ?? '—'} ms</strong> · last ${u.lastLatencyMs ?? '—'} ms · ${u.requests} requests</div>
+      ${down ? '<div class="small text-danger mt-1">Upstream looks Down (3 failed checks). Consider draining traffic.</div>' : ''}
+      <div class="form-check form-switch mt-2">
+        <input class="form-check-input drain" type="checkbox" role="switch" id="d-${esc(u.id)}" data-id="${esc(u.id)}" ${u.drained ? 'checked' : ''}>
+        <label class="form-check-label" for="d-${esc(u.id)}">Drain traffic ${u.drained ? '<span class="badge b-info">⏸ drained</span>' : ''}</label>
+      </div></div></div>`;
+  }).join('');
+  document.querySelectorAll('.drain').forEach(el => el.addEventListener('change', async () => {
+    const want = el.checked;
+    if (!confirm(want ? 'Drain this upstream? New requests will not be forwarded.' : 'Resume traffic to this upstream?')) { el.checked = !want; return; }
+    try { await post('/drain', {upstream: el.dataset.id, drained: want});
+          banner(want ? 'Traffic drained. New requests to this upstream are paused.' : 'Traffic resumed. Requests are forwarded again.'); refresh();
+    } catch (e) { el.checked = !want; banner('Could not change drain state: ' + e.message, 'danger'); }
+  }));
+}
+function render() {
+  const q = $('q').value.toLowerCase(), st = $('st').value;
+  current = logs.filter(e => (st === 'all' || group(e) === st) &&
+    (!q || [e.method, e.path, e.upstream, e.outcome, e.status].join(' ').toLowerCase().includes(q)));
+  $('empty').classList.toggle('d-none', logs.length > 0);
+  $('noresults').classList.toggle('d-none', !(logs.length > 0 && current.length === 0));
+  $('logTable').classList.toggle('d-none', current.length === 0);
+  $('count').textContent = current.length;
+  $('rows').innerHTML = current.map((e, i) => {
+    const [cls, icon, label] = OUT[e.outcome] || ['b-error', '✖', e.outcome];
+    return `<tr role="button" tabindex="0" data-i="${i}">
+      <td data-label="Time">${esc(e.ts)}</td><td data-label="Method">${esc(e.method)}</td>
+      <td data-label="Path"><code>${esc(e.path)}</code></td><td data-label="Upstream">${esc(e.upstream ?? '—')}</td>
+      <td data-label="Result"><span class="badge badge-status ${cls}">${icon} ${e.status} ${label}</span></td>
+      <td data-label="Latency" class="text-end">${e.ms} ms</td></tr>`;
+  }).join('');
+  document.querySelectorAll('#rows tr').forEach(tr => {
+    const open = () => showDetail(current[+tr.dataset.i]);
+    tr.addEventListener('click', open);
+    tr.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); } });
+  });
+}
+function showDetail(e) {
+  const [, icon, label] = OUT[e.outcome] || ['', '✖', e.outcome];
+  $('detailBody').innerHTML = `<dl class="row mb-3">
+    <dt class="col-4">Request</dt><dd class="col-8"><code>${esc(e.method)} ${esc(e.path)}</code></dd>
+    <dt class="col-4">Result</dt><dd class="col-8">${icon} ${e.status} ${label}</dd>
+    <dt class="col-4">Latency</dt><dd class="col-8">${e.ms} ms</dd>
+    <dt class="col-4">Upstream</dt><dd class="col-8">${esc(e.upstream ?? '—')}</dd>
+    <dt class="col-4">Breaker</dt><dd class="col-8">${esc(e.breaker)}</dd>
+    <dt class="col-4">Caller (mTLS)</dt><dd class="col-8">${esc(e.caller ?? '—')}</dd>
+    <dt class="col-4">Request ID</dt><dd class="col-8"><code>${esc(e.id)}</code></dd>
+    <dt class="col-4">Error</dt><dd class="col-8">${esc(e.error ?? 'none')}</dd></dl>
+    <h3 class="h6">Request headers</h3><pre class="bg-light border rounded p-2 small mb-0">${esc(JSON.stringify(e.headers || {}, null, 2))}</pre>`;
+  bootstrap.Modal.getOrCreateInstance($('detail')).show();
+}
+$('refresh').onclick = refresh;
+$('q').oninput = $('st').onchange = render;
+$('resetFilters').onclick = () => { $('q').value = ''; $('st').value = 'all'; render(); };
+$('export').onclick = () => { const p = new URLSearchParams({q: $('q').value, status: $('st').value});
+  const a = Object.assign(document.createElement('a'), {href: API + '/logs.csv?' + p}); document.body.appendChild(a); a.click(); a.remove(); banner('CSV export started.'); };
+const loadSample = async () => { try { await post('/reset-sample'); banner('Sample data loaded.'); refresh(); } catch (e) { banner('Could not load sample data: ' + e.message, 'danger'); } };
+$('loadSample').onclick = $('resetSample').onclick = loadSample;
+$('clearLog').onclick = async () => { if (!confirm('Clear the whole log?')) return; try { await post('/clear-log'); banner('Log cleared.'); refresh(); } catch (e) { banner(e.message, 'danger'); } };
+setInterval(() => { if ($('auto').checked && !document.querySelector('.modal.show')) refresh(); }, 2000);
+refresh();
+</script>
+</body>
+</html>
