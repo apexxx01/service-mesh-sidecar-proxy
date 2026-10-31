@@ -1,4 +1,4 @@
-# Mini Envoy — Service Mesh Sidecar Proxy (educational mock)
+# Mini Envoy — Service Mesh Sidecar Proxy 
 
 > **Limits, stated plainly:** this is an educational prototype, **not Envoy**. The core sidecar forwards plain HTTP to local mock
 > services and logs every outcome. Health (Healthy/Down) comes from recent request results, not a real health probe, and drain is a
