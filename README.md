@@ -42,7 +42,7 @@ Drain from the terminal:
 `curl -XPOST localhost:8001/__sidecar/drain -H 'authorization: Bearer secret' -d '{"upstream":"payments","drained":true}'`
 
 ## Phone app
-1. `npx create-expo-app mini-envoy-app`, copy `mobile/App.js` over its `App.js`, run `npx expo start`, scan the QR in Expo Go.
+1. Use the ready project in `mobile/mini-envoy-app` (`npm install`, then `npx expo start`), or `npx create-expo-app mini-envoy-app`, copy `mobile/App.js` over its `App.js` and run `npx expo install react-native-safe-area-context`. Scan the QR in Expo Go.
 2. Run the sidecar with `--admin-host 0.0.0.0` so the phone can reach it, then enter `http://<laptop-ip>:8001` in the app.
 3. Phone and laptop on the same Wi-Fi (or the laptop's hotspot).
 

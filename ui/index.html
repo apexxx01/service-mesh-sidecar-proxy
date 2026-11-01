@@ -3,129 +3,531 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mini Envoy — sidecar log view</title>
+<title>Mini Envoy · Sidecar console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <style>
-  :root { --me-primary:#0F766E; --me-text:#1F2937; --me-error:#B42318; --me-warn:#B54708; --me-ok:#166534; --me-bg:#F8FAFC; }
-  body { background:var(--me-bg); color:var(--me-text); }
-  .navbar { background:var(--me-primary); }
-  .badge-status { font-weight:600; letter-spacing:.01em; }
-  .b-ok { background:#DCFCE7; color:var(--me-ok); border:1px solid var(--me-ok); }
-  .b-error { background:#FEE4E2; color:var(--me-error); border:1px solid var(--me-error); }
-  .b-warn { background:#FEF0C7; color:var(--me-warn); border:1px solid var(--me-warn); }
-  .b-block { background:#F3F4F6; color:#111827; border:1px solid #111827; }
-  .b-info { background:#E0F2FE; color:#075985; border:1px solid #075985; }
-  .stat { font-size:1.4rem; font-weight:700; }
-  tr[role=button] { cursor:pointer; }
-  /* phone width: stack each log row as a card (the PRD asks for stacked cards on phones) */
-  @media (max-width: 575.98px) {
-    table.log thead { display:none; }
-    table.log tr { display:block; margin-bottom:.75rem; border:1px solid #CBD5E1; border-radius:.5rem; background:#fff; }
-    table.log td { display:flex; justify-content:space-between; gap:1rem; border:0; padding:.35rem .75rem; }
-    table.log td::before { content:attr(data-label); font-weight:600; color:#475569; }
-  }
+/* ------------------------------------------------------------------
+   Quiet Console. Every colour is the PRD palette (section 13) or a
+   neutral mixed from it. Ratios are measured against --me-bg unless noted.
+   ------------------------------------------------------------------ */
+:root {
+  --me-bg:#F8FAFC;            /* page */
+  --me-surface:#FFFFFF;       /* panels */
+  --me-sunken:#EFF2F4;        /* notices, code, skeletons (text 13.06:1) */
+  --me-text:#1F2937;          /* 14.03:1 */
+  --me-text-2:#4A535E;        /* 7.46:1 */
+  --me-text-3:#69707A;        /* 4.78:1, bg/white only, never on sunken */
+  --me-border:#DADDE0;        /* decorative dividers only */
+  --me-border-strong:#8B9097; /* control outlines, 3.07:1 */
+  --me-primary:#0F766E;       /* actions, links, focus. never status. 5.23:1 */
+  --me-primary-strong:#136360;/* hover / pressed */
+  --me-primary-tint:#ECF4F3;  /* selected row */
+  --me-ok:#166534;  --me-ok-tint:#ECF3EF;    /* 6.81:1 */
+  --me-warn:#B54708; --me-warn-tint:#F9F0EB; /* 5.19:1 */
+  --me-err:#B42318; --me-err-tint:#F9EDED;   /* 6.28:1 */
+  --me-ink:#1F2937; --me-ink-hover:#2C3643; --me-ink-active:#353E4B; --me-ink-muted:#BCBFC3; /* sidebar */
+  --me-sans:'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --me-mono:'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --r-sm:4px; --r:6px;
+
+  --bs-body-font-family:var(--me-sans); --bs-body-color:var(--me-text); --bs-body-bg:var(--me-bg);
+  --bs-border-color:var(--me-border); --bs-link-color:var(--me-primary); --bs-link-color-rgb:15,118,110;
+  --bs-link-hover-color:var(--me-primary-strong); --bs-link-hover-color-rgb:19,99,96;
+  --bs-font-monospace:var(--me-mono); --bs-code-color:var(--me-text);
+}
+html { -webkit-text-size-adjust:100%; scroll-padding-top:120px; scroll-padding-bottom:88px; }
+@media (min-width:768px) { html { scroll-padding-bottom:16px; } }
+body { background:var(--me-bg); color:var(--me-text); font-size:1rem; line-height:1.5; }
+h1, .h1 { font-size:2rem; font-weight:600; letter-spacing:-.015em; line-height:1.2; margin:0; }
+h2, .h2 { font-size:1.25rem; font-weight:600; letter-spacing:-.005em; line-height:1.3; margin:0; }
+h3, .h3 { font-size:1rem; font-weight:600; margin:0; }
+.mono { font-family:var(--me-mono); font-feature-settings:"tnum"; }
+.tnum { font-variant-numeric:tabular-nums; }
+.t2 { color:var(--me-text-2); } .t3 { color:var(--me-text-3); }
+.small-t { font-size:.875rem; } .cap { font-size:.75rem; }
+.ic { width:1.125em; height:1.125em; flex:none; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; vertical-align:-.2em; }
+.visually-hidden-focusable:focus { position:fixed !important; top:8px; left:8px; z-index:2000; background:var(--me-surface); padding:8px 12px; border-radius:var(--r); }
+
+/* focus is always visible: 2px primary ring, 2px offset (5.23:1 on bg) */
+:focus-visible { outline:2px solid var(--me-primary); outline-offset:2px; box-shadow:none !important; }
+.btn:focus-visible, .form-control:focus-visible, .form-select:focus-visible, .form-check-input:focus-visible { outline:2px solid var(--me-primary); outline-offset:2px; box-shadow:none; }
+.form-control:focus, .form-select:focus { border-color:var(--me-primary); box-shadow:none; }
+
+/* buttons: two radii only (6 controls, 4 badges), no shadows at rest */
+.btn { --bs-btn-border-radius:var(--r); --bs-btn-font-weight:600; --bs-btn-padding-y:.5rem; --bs-btn-padding-x:.875rem; display:inline-flex; align-items:center; gap:.5rem; min-height:40px; }
+.btn-primary { --bs-btn-bg:var(--me-primary); --bs-btn-border-color:var(--me-primary); --bs-btn-hover-bg:var(--me-primary-strong); --bs-btn-hover-border-color:var(--me-primary-strong); --bs-btn-active-bg:var(--me-primary-strong); --bs-btn-active-border-color:var(--me-primary-strong); --bs-btn-disabled-bg:var(--me-primary); --bs-btn-disabled-border-color:var(--me-primary); }
+.btn-quiet { --bs-btn-color:var(--me-text); --bs-btn-bg:var(--me-surface); --bs-btn-border-color:var(--me-border-strong); --bs-btn-hover-bg:var(--me-sunken); --bs-btn-hover-border-color:var(--me-text-2); --bs-btn-hover-color:var(--me-text); --bs-btn-active-bg:var(--me-sunken); --bs-btn-active-border-color:var(--me-text-2); --bs-btn-active-color:var(--me-text); }
+.btn-drain { --bs-btn-color:#fff; --bs-btn-bg:var(--me-warn); --bs-btn-border-color:var(--me-warn); --bs-btn-hover-color:#fff; --bs-btn-hover-bg:#9A3D07; --bs-btn-hover-border-color:#9A3D07; --bs-btn-active-bg:#9A3D07; --bs-btn-active-color:#fff; }
+.btn-destroy { --bs-btn-color:#fff; --bs-btn-bg:var(--me-err); --bs-btn-border-color:var(--me-err); --bs-btn-hover-color:#fff; --bs-btn-hover-bg:#991E14; --bs-btn-hover-border-color:#991E14; --bs-btn-active-bg:#991E14; --bs-btn-active-color:#fff; }
+.btn-text { --bs-btn-color:var(--me-primary); --bs-btn-hover-color:var(--me-primary-strong); --bs-btn-active-color:var(--me-primary-strong); --bs-btn-border-color:transparent; --bs-btn-hover-bg:var(--me-primary-tint); --bs-btn-active-bg:var(--me-primary-tint); }
+.form-control, .form-select { border-color:var(--me-border-strong); border-radius:var(--r); min-height:40px; color:var(--me-text); }
+.form-check-input { border-color:var(--me-border-strong); }
+.form-switch .form-check-input:checked { background-color:var(--me-warn); border-color:var(--me-warn); }
+.form-switch.auto .form-check-input:checked { background-color:var(--me-primary); border-color:var(--me-primary); }
+.form-label { font-size:.875rem; font-weight:600; color:var(--me-text); margin-bottom:.25rem; }
+
+/* ---------- app frame ---------- */
+.app { min-height:100vh; display:grid; grid-template-columns:1fr; }
+.side { display:none; }
+.bottomnav { position:fixed; inset:auto 0 0 0; z-index:1030; display:grid; grid-template-columns:repeat(4,1fr); background:var(--me-surface); border-top:1px solid var(--me-border); padding-bottom:env(safe-area-inset-bottom); }
+.bottomnav a { min-height:56px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; color:var(--me-text-2); text-decoration:none; font-size:.75rem; font-weight:600; }
+.bottomnav a .ic { width:22px; height:22px; }
+.bottomnav a[aria-current=page] { color:var(--me-primary); box-shadow:inset 0 3px 0 var(--me-primary); }
+main { min-width:0; padding-bottom:88px; }
+@media (min-width:768px) {
+  .app { grid-template-columns:96px minmax(0,1fr); }
+  .bottomnav { display:none; }
+  main { padding-bottom:0; }
+  .side { display:flex; flex-direction:column; position:sticky; top:0; height:100vh; background:var(--me-ink); color:#fff; padding:16px 8px; gap:4px; }
+  .brand { display:flex; flex-direction:column; align-items:center; gap:6px; padding:4px 4px 20px; color:#fff; text-decoration:none; }
+  .brand-name { font-weight:600; font-size:.8125rem; text-align:center; line-height:1.2; }
+  .brand-sub { display:none; }
+  .side a.nav-i { display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 4px; border-radius:var(--r); color:var(--me-ink-muted); text-decoration:none; font-size:.75rem; font-weight:600; position:relative; }
+  .side a.nav-i .ic { width:22px; height:22px; }
+  .side a.nav-i:hover { background:var(--me-ink-hover); color:#fff; }
+  .side a.nav-i[aria-current=page] { background:var(--me-ink-active); color:#fff; }
+  .side a.nav-i[aria-current=page]::before { content:""; position:absolute; left:-8px; top:10px; bottom:10px; width:3px; border-radius:0 3px 3px 0; background:#fff; }
+  .side-foot { margin-top:auto; font-size:.75rem; color:var(--me-ink-muted); text-align:center; padding:8px 4px; line-height:1.4; }
+  .side-foot .full { display:none; }
+}
+@media (min-width:1200px) {
+  .app { grid-template-columns:232px minmax(0,1fr); }
+  .side { padding:20px 12px; }
+  .brand { flex-direction:row; align-items:center; gap:10px; padding:4px 8px 24px; }
+  .brand-name { font-size:1rem; text-align:left; }
+  .brand-sub { display:block; font-size:.75rem; color:var(--me-ink-muted); font-weight:400; }
+  .side a.nav-i { flex-direction:row; gap:12px; padding:10px 12px; font-size:.9375rem; }
+  .side a.nav-i::before { left:-12px !important; }
+  .side-foot { text-align:left; padding:12px; }
+  .side-foot .full { display:inline; } .side-foot .short { display:none; }
+}
+.logo { width:32px; height:32px; flex:none; }
+
+/* status strip: always on top, the incident spine */
+.strip { position:sticky; top:0; z-index:1020; background:var(--me-surface); border-bottom:1px solid var(--me-border); }
+.strip-in { max-width:1360px; margin:0 auto; padding:10px 16px; display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; }
+.strip .who { display:flex; align-items:center; gap:8px; font-weight:600; }
+.strip .who .mob-brand { display:inline-flex; align-items:center; gap:8px; }
+@media (min-width:768px) { .strip .who .mob-brand { display:none; } .strip-in { padding:12px 24px; } }
+.strip .ups { display:flex; flex-wrap:wrap; gap:4px 16px; }
+.strip .ups .u { display:inline-flex; align-items:center; gap:6px; font-size:.875rem; }
+.strip .ups .u b { font-weight:600; color:var(--me-text); }
+.strip .right { margin-left:auto; display:flex; align-items:center; gap:12px; }
+.strip .upd { font-size:.875rem; color:var(--me-text-2); }
+@media (max-width:575.98px) { .strip .right .form-switch, .strip .upd .lbl { display:none; } .strip .ups { order:3; width:100%; } }
+
+.wrap { max-width:1360px; margin:0 auto; padding:24px 16px 48px; }
+@media (min-width:768px) { .wrap { padding:32px 24px 48px; } }
+.page-head { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 24px; margin-bottom:24px; }
+.page-head p { margin:6px 0 0; color:var(--me-text-2); max-width:62ch; }
+.page-head .acts { margin-left:auto; display:flex; flex-wrap:wrap; gap:8px; }
+.foot-note { margin-top:48px; padding-top:16px; border-top:1px solid var(--me-border); font-size:.875rem; color:var(--me-text-2); display:flex; gap:8px; align-items:flex-start; }
+
+.panel { background:var(--me-surface); border:1px solid var(--me-border); border-radius:var(--r); }
+.panel-pad { padding:20px; }
+@media (min-width:992px) { .panel-pad { padding:24px; } }
+.sec { margin-top:48px; } .sec > .sec-head { display:flex; align-items:baseline; gap:12px; margin-bottom:16px; }
+.sec > .sec-head a { margin-left:auto; font-weight:600; font-size:.9375rem; text-decoration:none; }
+
+/* ---------- status language: icon + word, colour never alone ---------- */
+.st { display:inline-flex; align-items:center; gap:6px; font-weight:600; white-space:nowrap; line-height:1.25; }
+.st-ok { color:var(--me-ok); } .st-warn { color:var(--me-warn); } .st-err { color:var(--me-err); } .st-neu { color:var(--me-text-2); }
+.banner { display:flex; gap:12px; align-items:flex-start; padding:14px 16px; border-radius:var(--r); border:1px solid; margin-bottom:16px; }
+.banner .ic { width:22px; height:22px; margin-top:1px; }
+.banner .b-body { flex:1; min-width:0; }
+.banner .b-title { font-weight:600; }
+.banner .b-act { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+.banner.b-err { background:var(--me-err-tint); border-color:var(--me-err); }   .banner.b-err > .ic, .banner.b-err .b-title { color:var(--me-err); }
+.banner.b-warn { background:var(--me-warn-tint); border-color:var(--me-warn); } .banner.b-warn > .ic { color:var(--me-warn); }
+.banner.b-ok { background:var(--me-ok-tint); border-color:var(--me-ok); }     .banner.b-ok > .ic, .banner.b-ok .b-title { color:var(--me-ok); }
+.banner.b-neu { background:var(--me-sunken); border-color:var(--me-border); }  .banner.b-neu > .ic { color:var(--me-text-2); }
+.banner .b-x { margin:-6px -8px -6px 0; min-height:36px; padding:6px 8px; color:var(--me-text-2); }
+.banner p { margin:2px 0 0; color:var(--me-text); }
+
+/* ---------- the Path Strip: where did the request stop? ---------- */
+.path { display:flex; align-items:flex-start; width:100%; max-width:560px; }
+.pnode { display:flex; flex-direction:column; align-items:center; gap:6px; flex:none; width:76px; text-align:center; }
+.pnode .dot { width:14px; height:14px; border-radius:50%; border:2px solid var(--me-border-strong); background:var(--me-surface); margin-top:5px; }
+.pnode.on .dot { border-color:var(--me-text); background:var(--me-text); }
+.pnode .pl { font-size:.75rem; font-weight:600; color:var(--me-text-2); line-height:1.2; overflow-wrap:anywhere; }
+.pnode.on .pl { color:var(--me-text); }
+.plink { flex:1; position:relative; height:24px; margin:0 -24px; min-width:40px; }
+.plink::before { content:""; position:absolute; left:0; right:0; top:11px; border-top:2px dashed var(--me-border-strong); }
+.plink.on::before { border-top:2px solid var(--me-text-2); }
+.plink .pm { position:absolute; left:50%; top:0; transform:translateX(-50%); width:24px; height:24px; border-radius:50%; background:var(--me-surface); display:grid; place-items:center; }
+.plink .pm .ic { width:20px; height:20px; }
+.plink .flow { position:absolute; top:9px; left:0; width:6px; height:6px; border-radius:50%; background:var(--me-text-2); opacity:0; }
+.plink.on.live .flow { animation:flow 2.4s linear infinite; }
+@keyframes flow { 0% { left:6%; opacity:0; } 10% { opacity:1; } 90% { opacity:1; } 100% { left:94%; opacity:0; } }
+.path-cap { display:flex; gap:8px; align-items:flex-start; margin:12px 0 0; font-size:.875rem; color:var(--me-text); }
+.path-cap .ic { margin-top:2px; }
+.path.sm .pnode { width:64px; } .path.sm .pnode .pl { font-size:.75rem; }
+
+/* ---------- overview ---------- */
+.ugrid { display:grid; gap:24px; grid-template-columns:1fr; }
+@media (min-width:992px) { .ugrid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.ucard .u-head { display:flex; align-items:flex-start; gap:12px; }
+.ucard .u-head .t { min-width:0; flex:1; }
+.ucard .u-target { font-size:.875rem; color:var(--me-text-2); overflow-wrap:anywhere; }
+.ucard .u-status { font-size:1.0625rem; }
+.ucard .u-status .ic { width:22px; height:22px; }
+.ucard .metrics { display:flex; flex-wrap:wrap; gap:16px 32px; margin:24px 0; align-items:flex-end; }
+.big { font-family:var(--me-mono); font-size:2rem; font-weight:500; line-height:1; letter-spacing:-.02em; font-feature-settings:"tnum"; }
+.big .u { font-family:var(--me-sans); font-size:1rem; font-weight:400; color:var(--me-text-2); margin-left:4px; letter-spacing:0; }
+.metric .k { font-size:.875rem; color:var(--me-text-2); margin-top:6px; }
+.metric .v { font-family:var(--me-mono); font-size:1rem; font-feature-settings:"tnum"; }
+.drain-row { display:flex; align-items:center; gap:16px; margin:24px -20px -20px; padding:14px 20px; border-top:1px solid var(--me-border); background:var(--me-bg); border-radius:0 0 var(--r) var(--r); }
+@media (min-width:992px) { .drain-row { margin:24px -24px -24px; padding:14px 24px; } }
+.drain-row .form-check-input { width:2.75em; height:1.5em; margin:0; cursor:pointer; }
+.drain-row label { cursor:pointer; flex:1; }
+.drain-row .lbl { font-weight:600; display:block; }
+.drain-row .sub { font-size:.875rem; color:var(--me-text-2); }
+
+.counts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+@media (min-width:768px) { .counts { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+@media (min-width:1200px) { .counts { grid-template-columns:1.3fr repeat(6,minmax(0,1fr)); } }
+.count { padding:18px 20px; border-right:1px solid var(--me-border); border-bottom:1px solid var(--me-border); }
+.count .k { display:flex; align-items:center; gap:6px; font-size:.875rem; font-weight:600; }
+.count .n { font-family:var(--me-mono); font-size:2rem; font-weight:500; line-height:1.1; margin-top:8px; font-feature-settings:"tnum"; letter-spacing:-.02em; }
+.count.total { background:var(--me-bg); }
+@media (min-width:1200px) { .count { border-bottom:0; } .count:last-child { border-right:0; } }
+
+.recent { list-style:none; margin:0; padding:0; }
+.recent li + li { border-top:1px solid var(--me-border); }
+.recent a { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:4px 16px; align-items:center; padding:12px 20px; color:var(--me-text); text-decoration:none; }
+.recent a:hover { background:var(--me-bg); }
+.recent .p { font-family:var(--me-mono); font-size:.875rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.recent .ms { font-family:var(--me-mono); font-size:.875rem; font-feature-settings:"tnum"; color:var(--me-text-2); }
+.recent .stc { min-width:9.5rem; font-size:.875rem; }
+@media (max-width:575.98px) { .recent a { grid-template-columns:minmax(0,1fr) auto; } .recent .stc { grid-column:1 / -1; min-width:0; } }
+
+/* ---------- access log ---------- */
+.filters { display:flex; flex-wrap:wrap; gap:12px 16px; align-items:flex-end; margin-bottom:16px; }
+.filters .search { flex:1 1 240px; max-width:360px; position:relative; }
+.filters .search .ic { position:absolute; left:12px; bottom:11px; color:var(--me-text-2); pointer-events:none; }
+.filters .search input { padding-left:38px; }
+.chips { border:0; margin:0; padding:0; min-width:0; flex:1 1 100%; }
+.chips legend { font-size:.875rem; font-weight:600; margin-bottom:6px; float:none; width:auto; }
+.chip-row { position:relative; display:flex; gap:8px; overflow-x:auto; padding:2px 2px 6px; scrollbar-width:thin; }
+.chip-row input { position:absolute; opacity:0; pointer-events:none; }
+.chip-row label { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; min-height:36px; padding:6px 12px; border:1px solid var(--me-border-strong); border-radius:var(--r); background:var(--me-surface); font-size:.875rem; font-weight:600; cursor:pointer; color:var(--me-text); }
+.chip-row label:hover { background:var(--me-sunken); }
+.chip-row input:checked + label { background:var(--me-text); border-color:var(--me-text); color:#fff; }
+.chip-row input:checked + label .ic { color:#fff; }
+.chip-row input:focus-visible + label { outline:2px solid var(--me-primary); outline-offset:2px; }
+@media (min-width:992px) { .chips { flex:0 1 auto; } }
+
+.loglay { display:grid; gap:24px; grid-template-columns:minmax(0,1fr); align-items:start; }
+@media (min-width:768px) { .loglay { grid-template-columns:minmax(0,1fr) 340px; } }
+@media (min-width:1200px) { .loglay { grid-template-columns:minmax(0,1fr) 380px; } }
+.detail-pane { display:none; }
+@media (min-width:768px) { .detail-pane { display:block; position:sticky; top:84px; max-height:calc(100vh - 100px); overflow:auto; } }
+
+.tbl-wrap { overflow-x:auto; }
+table.log { width:100%; margin:0; border-collapse:separate; border-spacing:0; font-size:.875rem; }
+table.log th { position:sticky; top:0; background:var(--me-bg); font-weight:600; font-size:.8125rem; color:var(--me-text-2); text-align:left; padding:10px; border-bottom:1px solid var(--me-border); white-space:nowrap; }
+table.log td { padding:0 10px; height:44px; border-bottom:1px solid var(--me-border); vertical-align:middle; white-space:nowrap; }
+table.log tbody tr { cursor:pointer; }
+table.log tbody tr:hover td { background:var(--me-bg); }
+table.log tbody tr:focus-visible { outline:2px solid var(--me-primary); outline-offset:-2px; }
+table.log tbody tr[aria-selected=true] td { background:var(--me-primary-tint); }
+table.log tbody tr[aria-selected=true] td:first-child { box-shadow:inset 3px 0 0 var(--me-primary); }
+table.log tbody tr:last-child td { border-bottom:0; }
+table.log .c-path { font-family:var(--me-mono); max-width:240px; overflow:hidden; text-overflow:ellipsis; }
+table.log .c-num { font-family:var(--me-mono); font-feature-settings:"tnum"; }
+table.log .c-ms { text-align:right; font-family:var(--me-mono); font-feature-settings:"tnum"; }
+table.log .c-ms .u, .ms .u { color:var(--me-text-2); font-family:var(--me-sans); font-size:.8125rem; margin-left:2px; }
+table.log .c-time { color:var(--me-text-2); font-family:var(--me-mono); font-feature-settings:"tnum"; }
+table.log .s5 { color:var(--me-err); font-weight:500; }
+/* below 1200px (phone, and tablet beside the detail panel) each row becomes a stacked card */
+@media (max-width:1199.98px) {
+  table.log thead { display:none; }
+  table.log, table.log tbody { display:block; }
+  table.log tbody tr { display:grid; grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"o ms" "p p" "meta meta"; gap:6px 12px; padding:14px 16px; border-bottom:1px solid var(--me-border); }
+  table.log tbody tr:last-child { border-bottom:0; }
+  table.log td { display:block; height:auto; padding:0; border:0; background:none !important; box-shadow:none !important; }
+  table.log tbody tr[aria-selected=true] { background:var(--me-primary-tint); box-shadow:inset 3px 0 0 var(--me-primary); }
+  table.log .c-out { grid-area:o; } table.log .c-ms { grid-area:ms; }
+  table.log .c-path { grid-area:p; max-width:none; white-space:normal; overflow-wrap:anywhere; font-size:.9375rem; }
+  table.log .c-path::before { content:attr(data-m) " "; font-weight:500; }
+  table.log .c-method, table.log .c-status, table.log .c-time { display:none; }
+  table.log .c-meta { grid-area:meta; display:block !important; color:var(--me-text-2); font-size:.8125rem; }
+}
+table.log .c-meta { display:none; }
+.tbl-foot { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:12px 16px; border-top:1px solid var(--me-border); font-size:.875rem; color:var(--me-text-2); }
+.tbl-foot .acts { margin-left:auto; display:flex; gap:8px; flex-wrap:wrap; }
+.tbl-foot .btn { min-height:36px; --bs-btn-padding-y:.375rem; font-size:.875rem; }
+
+.state { text-align:left; padding:40px 24px; display:flex; gap:16px; align-items:flex-start; }
+.state .ic { width:28px; height:28px; color:var(--me-text-2); margin-top:2px; }
+.state h3 { font-size:1.0625rem; } .state p { margin:4px 0 12px; color:var(--me-text-2); max-width:52ch; }
+
+/* detail */
+.dt-head { padding:20px; border-bottom:1px solid var(--me-border); }
+.dt-head .row1 { display:flex; align-items:center; gap:12px; justify-content:space-between; margin-bottom:16px; }
+.dt-head .req { font-family:var(--me-mono); font-size:.9375rem; overflow-wrap:anywhere; margin-bottom:16px; }
+.dt-body { padding:20px; }
+.dl { display:grid; grid-template-columns:7.5rem minmax(0,1fr); gap:10px 12px; margin:0 0 20px; font-size:.875rem; }
+.dl dt { color:var(--me-text-2); font-weight:400; } .dl dd { margin:0; overflow-wrap:anywhere; }
+.codeblock { position:relative; background:var(--me-sunken); border-radius:var(--r); padding:14px 16px; font-family:var(--me-mono); font-size:.8125rem; white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 0; color:var(--me-text); }
+.dt-nav { display:flex; gap:8px; padding:12px 20px; border-top:1px solid var(--me-border); }
+.dt-nav .btn { flex:1; justify-content:center; min-height:36px; font-size:.875rem; }
+
+/* config + about */
+.cfg-grid { display:grid; gap:24px; grid-template-columns:1fr; }
+@media (min-width:992px) { .cfg-grid { grid-template-columns:1fr 1fr; } .cfg-grid .wide { grid-column:1 / -1; } }
+.kv { list-style:none; margin:0; padding:0; }
+.kv li { display:flex; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--me-border); font-size:.9375rem; }
+.kv li:first-child { border-top:0; }
+details.raw summary { cursor:pointer; font-weight:600; color:var(--me-primary); min-height:40px; display:flex; align-items:center; }
+.notice { display:flex; gap:14px; align-items:flex-start; background:var(--me-sunken); border-radius:var(--r); padding:20px; border-left:4px solid var(--me-text); }
+.notice .ic { width:24px; height:24px; color:var(--me-text); margin-top:2px; }
+.notice strong { display:block; font-size:1.0625rem; }
+.notice p { margin:4px 0 0; color:var(--me-text); }
+.about-grid { display:grid; gap:24px; grid-template-columns:1fr; margin-top:32px; }
+@media (min-width:992px) { .about-grid { grid-template-columns:1fr 1fr; } }
+.about-grid .panel p { margin:8px 0 20px; color:var(--me-text); }
+.about-grid code, .kv code, .dl code { font-family:var(--me-mono); font-size:.875em; background:var(--me-sunken); padding:1px 5px; border-radius:var(--r-sm); color:var(--me-text); }
+
+/* skeleton */
+.sk { background:var(--me-sunken); border-radius:var(--r-sm); height:14px; }
+.sk-card { height:220px; border-radius:var(--r); }
+
+/* modals + offcanvas: the only floating things get the only shadow */
+.modal-content, .offcanvas { border:0; border-radius:var(--r); box-shadow:0 12px 32px rgba(31,41,55,.18); }
+.modal-header, .modal-footer { border-color:var(--me-border); }
+.modal-title { font-size:1.25rem; font-weight:600; }
+.offcanvas-bottom { height:88vh !important; border-radius:12px 12px 0 0; }
+.sheet-head { padding:16px 20px; border-bottom:1px solid var(--me-border); }
+.toast-area { position:fixed; right:16px; bottom:16px; z-index:1080; max-width:420px; width:calc(100% - 32px); }
+@media (max-width:767.98px) { .toast-area { bottom:80px; } }
+.toast-area .banner { box-shadow:0 12px 32px rgba(31,41,55,.18); margin:8px 0 0; background-clip:padding-box; }
+.toast-area .banner.b-ok { background:var(--me-surface); }
+
+[hidden] { display:none !important; }
+@media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
 </style>
 </head>
 <body>
-<nav class="navbar navbar-dark mb-3">
-  <div class="container-xl">
-    <span class="navbar-brand mb-0 h1">Mini Envoy <small class="opacity-75 fs-6">sidecar log view</small></span>
-    <span id="sidecarName" class="text-white-50 small"></span>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></symbol>
+  <symbol id="i-xoct" viewBox="0 0 24 24"><path d="M7.9 2h8.2L22 7.9v8.2L16.1 22H7.9L2 16.1V7.9z"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6.5V12l3.5 2"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M10 15.5v-7M14 15.5v-7"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></symbol>
+  <symbol id="i-dash" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-dasharray="3 3.3"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4.5M12 8h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3M7 10l5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H4"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5 2.5 2.5 0 0 0 6.5 24"/><path d="M8 7h8M8 11h6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7.5"/><path d="m20.5 20.5-4-4"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m10 8.5 5 3.5-5 3.5z"/></symbol>
+  <symbol id="i-logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#0F766E" stroke="none"/><path d="M8 16h16" stroke="#fff" stroke-width="2"/><circle cx="8" cy="16" r="3" fill="#fff" stroke="none"/><circle cx="16" cy="16" r="3.5" fill="#0F766E" stroke="#fff" stroke-width="2"/><circle cx="24" cy="16" r="3" fill="#fff" stroke="none"/></symbol>
+</svg>
+
+<a class="visually-hidden-focusable" href="#content">Skip to content</a>
+<div id="announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+<div class="app">
+  <nav class="side" aria-label="Main">
+    <a class="brand" href="#overview">
+      <svg class="logo" aria-hidden="true"><use href="#i-logo"/></svg>
+      <span><span class="brand-name">Mini Envoy</span><span class="brand-sub">Sidecar console</span></span>
+    </a>
+    <a class="nav-i" href="#overview" data-view="overview"><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg>Overview</a>
+    <a class="nav-i" href="#log" data-view="log"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Access log</a>
+    <a class="nav-i" href="#config" data-view="config"><svg class="ic" aria-hidden="true"><use href="#i-sliders"/></svg>Config</a>
+    <a class="nav-i" href="#about" data-view="about"><svg class="ic" aria-hidden="true"><use href="#i-book"/></svg>About</a>
+    <div class="side-foot"><span class="full">Educational prototype, not Envoy.</span><span class="short">Not Envoy</span></div>
+  </nav>
+
+  <main id="content" tabindex="-1">
+    <!-- status strip: sidecar, upstream health, last update. Same on every screen. -->
+    <header class="strip">
+      <div class="strip-in">
+        <div class="who">
+          <span class="mob-brand"><svg class="logo" style="width:28px;height:28px" aria-hidden="true"><use href="#i-logo"/></svg><span>Mini Envoy</span></span>
+          <span id="sidecarState" class="st st-neu"><svg class="ic" aria-hidden="true"><use href="#i-dash"/></svg>Connecting…</span>
+        </div>
+        <div class="ups" id="stripUps" aria-label="Upstream health"></div>
+        <div class="right">
+          <span class="upd"><span class="lbl">Updated </span><span id="updated" class="mono">--:--:--</span></span>
+          <div class="form-check form-switch auto mb-0">
+            <input class="form-check-input" type="checkbox" role="switch" id="auto" checked>
+            <label class="form-check-label small-t" for="auto">Auto-refresh</label>
+          </div>
+          <button id="refresh" class="btn btn-quiet" type="button"><svg class="ic" aria-hidden="true"><use href="#i-refresh"/></svg>Refresh</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="wrap">
+      <div id="alerts"></div>
+
+      <!-- ================= OVERVIEW ================= -->
+      <section id="v-overview" data-view="overview" aria-labelledby="h-overview">
+        <div class="page-head">
+          <div>
+            <h1 id="h-overview" tabindex="-1">Overview</h1>
+            <p id="ovSub">Loading the sidecar's state…</p>
+          </div>
+          <div class="acts"><a class="btn btn-quiet" href="#log"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Open access log</a></div>
+        </div>
+        <div id="downBanners"></div>
+        <div class="ugrid" id="upstreams">
+          <div class="panel sk sk-card"></div><div class="panel sk sk-card"></div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-head"><h2>Requests by outcome</h2></div>
+          <div class="panel counts" id="stats"></div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-head"><h2>Latest requests</h2><a href="#log">See all in the access log</a></div>
+          <div class="panel" id="recentWrap"><ul class="recent" id="recent"></ul></div>
+        </div>
+      </section>
+
+      <!-- ================= ACCESS LOG ================= -->
+      <section id="v-log" data-view="log" aria-labelledby="h-log" hidden>
+        <div class="page-head">
+          <div>
+            <h1 id="h-log" tabindex="-1">Access log</h1>
+            <p>Every request the sidecar handled: forwarded, blocked, drained or timed out. Newest first.</p>
+          </div>
+          <div class="acts">
+            <button id="export" class="btn btn-quiet" type="button"><svg class="ic" aria-hidden="true"><use href="#i-download"/></svg>Export CSV</button>
+          </div>
+        </div>
+
+        <div class="filters">
+          <div class="search">
+            <label for="q" class="form-label">Search</label>
+            <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+            <input id="q" class="form-control" type="search" placeholder="Path, method or upstream" autocomplete="off">
+          </div>
+          <fieldset class="chips">
+            <legend>Outcome</legend>
+            <div class="chip-row" id="chips"></div>
+          </fieldset>
+        </div>
+
+        <div class="loglay">
+          <div class="panel" id="logPanel">
+            <div id="logState"></div>
+            <div class="tbl-wrap" id="tblWrap">
+              <table class="log" id="logTable" aria-describedby="countLine">
+                <thead><tr><th scope="col">Time</th><th scope="col">Method</th><th scope="col">Path</th><th scope="col">Status</th><th scope="col">Outcome</th><th scope="col" style="text-align:right">Latency</th></tr></thead>
+                <tbody id="rows"></tbody>
+              </table>
+            </div>
+            <div class="tbl-foot">
+              <span id="countLine"><span id="count">0</span> requests shown. Select a row for its detail.</span>
+              <div class="acts">
+                <button id="resetSample" class="btn btn-quiet" type="button">Reset to sample data</button>
+                <button id="clearLog" class="btn btn-quiet" type="button" style="--bs-btn-color:var(--me-err)">Clear log</button>
+              </div>
+            </div>
+          </div>
+          <aside class="panel detail-pane" id="detailPane" aria-label="Request detail"></aside>
+        </div>
+      </section>
+
+      <!-- ================= CONFIG ================= -->
+      <section id="v-config" data-view="config" aria-labelledby="h-config" hidden>
+        <div class="page-head">
+          <div>
+            <h1 id="h-config" tabindex="-1">Config</h1>
+            <p>Read-only. These values come from <code class="mono">config.json</code> when the sidecar starts. Drain changes are saved back to it.</p>
+          </div>
+        </div>
+        <div class="cfg-grid" id="cfg">
+          <div class="panel sk sk-card"></div><div class="panel sk sk-card"></div>
+        </div>
+      </section>
+
+      <!-- ================= ABOUT ================= -->
+      <section id="v-about" data-view="about" aria-labelledby="h-about" hidden>
+        <div class="page-head">
+          <div>
+            <h1 id="h-about" tabindex="-1">About this proxy</h1>
+            <p>How the sidecar decides what happens to each request, and what this demo does not do.</p>
+          </div>
+        </div>
+        <div class="notice" role="note">
+          <svg class="ic" aria-hidden="true"><use href="#i-info"/></svg>
+          <div>
+            <strong>Educational prototype — not Envoy, no mTLS on this path.</strong>
+            <p>The sidecar forwards plain HTTP to local mock services and logs every outcome. Health (Healthy or Down) comes from recent request results, not a real health probe. There is no service discovery, load balancing or production routing.</p>
+          </div>
+        </div>
+        <div class="about-grid" id="aboutGrid"></div>
+      </section>
+
+      <p class="foot-note"><svg class="ic" aria-hidden="true"><use href="#i-info"/></svg><span>Educational prototype — not Envoy. Plain HTTP to local mock services; latency is measured, health is derived from recent requests.</span></p>
+    </div>
+  </main>
+
+  <nav class="bottomnav" aria-label="Main">
+    <a href="#overview" data-view="overview"><svg class="ic" aria-hidden="true"><use href="#i-home"/></svg>Overview</a>
+    <a href="#log" data-view="log"><svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>Log</a>
+    <a href="#config" data-view="config"><svg class="ic" aria-hidden="true"><use href="#i-sliders"/></svg>Config</a>
+    <a href="#about" data-view="about"><svg class="ic" aria-hidden="true"><use href="#i-book"/></svg>About</a>
+  </nav>
+</div>
+
+<!-- phone: request detail as a bottom sheet -->
+<div class="offcanvas offcanvas-bottom" tabindex="-1" id="detailSheet" aria-labelledby="sheetTitle">
+  <div class="offcanvas-header sheet-head">
+    <h2 class="offcanvas-title" id="sheetTitle">Request detail</h2>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
   </div>
-</nav>
+  <div class="offcanvas-body p-0" id="sheetBody"></div>
+</div>
 
-<main class="container-xl pb-5">
-  <div id="alerts" role="status" aria-live="polite"></div>
-
-  <!-- overview -->
-  <section aria-labelledby="h-overview" class="mb-4">
-    <h2 id="h-overview" class="h5">Overview</h2>
-    <div class="row g-2" id="stats"></div>
-  </section>
-
-  <!-- upstream health + drain -->
-  <section aria-labelledby="h-up" class="mb-4">
-    <h2 id="h-up" class="h5">Upstreams</h2>
-    <div class="row g-3" id="upstreams" aria-live="polite"></div>
-  </section>
-
-  <!-- access log -->
-  <section aria-labelledby="h-log" class="mb-4">
-    <div class="d-flex flex-wrap align-items-end gap-2 mb-2">
-      <h2 id="h-log" class="h5 me-auto mb-0">Access log</h2>
-      <div>
-        <label for="q" class="form-label small mb-0">Search</label>
-        <input id="q" class="form-control form-control-sm" placeholder="path, method, upstream">
-      </div>
-      <div>
-        <label for="st" class="form-label small mb-0">Status</label>
-        <select id="st" class="form-select form-select-sm">
-          <option value="all">All</option><option value="ok">OK</option><option value="error">Error</option>
-          <option value="timeout">Timed out</option><option value="blocked">Blocked</option>
-          <option value="drained">Drained</option><option value="short_circuit">Breaker open</option>
-          <option value="denied">Denied</option>
-        </select>
-      </div>
-      <button id="refresh" class="btn btn-sm btn-primary" style="background:var(--me-primary);border-color:var(--me-primary)">Refresh</button>
-      <button id="export" class="btn btn-sm btn-outline-secondary">Export CSV</button>
-      <div class="form-check form-switch ms-1">
-        <input class="form-check-input" type="checkbox" id="auto" checked>
-        <label class="form-check-label small" for="auto">Auto-refresh</label>
-      </div>
-    </div>
-
-    <div id="empty" class="alert alert-secondary d-none">
-      No requests logged yet. Send a request through the sidecar to get started.
-      <button id="loadSample" class="btn btn-sm btn-outline-dark ms-2">Load sample data</button>
-    </div>
-    <div id="noresults" class="alert alert-secondary d-none">
-      No requests match these filters. <button id="resetFilters" class="btn btn-sm btn-outline-dark ms-2">Reset filters</button>
-    </div>
-
-    <div class="table-responsive">
-      <table class="table table-sm table-hover align-middle bg-white log" id="logTable">
-        <thead class="table-light">
-          <tr><th>Time</th><th>Method</th><th>Path</th><th>Upstream</th><th>Result</th><th class="text-end">Latency</th></tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
-    </div>
-    <div class="small text-muted"><span id="count">0</span> requests shown. Click a row for its detail.</div>
-    <div class="mt-2 d-flex gap-2 flex-wrap">
-      <button id="resetSample" class="btn btn-sm btn-outline-secondary">Reset to sample data</button>
-      <button id="clearLog" class="btn btn-sm btn-outline-danger">Clear log</button>
-    </div>
-  </section>
-
-  <!-- config + about -->
-  <div class="row g-3">
-    <section class="col-lg-6" aria-labelledby="h-cfg">
-      <h2 id="h-cfg" class="h5">Config</h2>
-      <pre id="cfg" class="bg-white border rounded p-3 small mb-0">loading…</pre>
-    </section>
-    <section class="col-lg-6" aria-labelledby="h-about">
-      <h2 id="h-about" class="h5">About this proxy</h2>
-      <div class="bg-white border rounded p-3 small">
-        <p><strong>Educational mock — not Envoy.</strong> The sidecar forwards plain HTTP to local mock services and logs every outcome. Latency is measured; health (Healthy or Down) comes from the last requests, not a real health probe.</p>
-        <ul class="mb-0">
-          <li><strong>Forward</strong>: GET and POST pass through with a timeout (504 if exceeded).</li>
-          <li><strong>Block</strong>: a path in <code>blockedPaths</code> gets 403 and is never forwarded.</li>
-          <li><strong>Drain</strong>: a drained upstream gets no new traffic; requests return 503 "drained".</li>
-          <li><strong>Bonus beyond the PRD</strong>: real mTLS between sidecars and a circuit breaker. Not used for production routing.</li>
-        </ul>
-      </div>
-    </section>
-  </div>
-</main>
-
-<!-- detail modal -->
-<div class="modal fade" id="detail" tabindex="-1" aria-labelledby="detailTitle" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
-    <div class="modal-header"><h2 class="modal-title h5" id="detailTitle">Request detail</h2>
+<!-- confirmations -->
+<div class="modal fade" id="confirm" tabindex="-1" aria-labelledby="confirmTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h2 class="modal-title" id="confirmTitle"></h2>
       <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
-    <div class="modal-body" id="detailBody"></div>
+    <div class="modal-body" id="confirmBody"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-quiet" data-bs-dismiss="modal" id="confirmNo"></button>
+      <button type="button" class="btn" id="confirmYes"></button>
+    </div>
   </div></div>
 </div>
+
+<div class="modal fade" id="tokenModal" tabindex="-1" aria-labelledby="tokenTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><form class="modal-content" id="tokenForm">
+    <div class="modal-header"><h2 class="modal-title" id="tokenTitle">Admin token required</h2>
+      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+    <div class="modal-body">
+      <p class="t2">Drain, reset and clear change the sidecar, so they need the token the sidecar was started with (<code class="mono">--admin-token</code>).</p>
+      <label class="form-label" for="tokenInput">Admin token</label>
+      <input class="form-control mono" id="tokenInput" type="password" autocomplete="off" required>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-quiet" data-bs-dismiss="modal">Cancel</button>
+      <button type="submit" class="btn btn-primary">Save and try again</button>
+    </div>
+  </form></div>
+</div>
+
+<div class="toast-area" id="toasts" aria-live="polite"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
@@ -133,110 +535,384 @@
 const API = new URLSearchParams(location.search).get('api') || '/__sidecar';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const OUT = {   // outcome -> [badge class, icon, label]; icon + text so status never relies on colour alone
-  ok:['b-ok','✔','OK'], upstream_5xx:['b-error','✖','Error'], upstream_down:['b-error','✖','Upstream down'],
-  timeout:['b-warn','⏱','Timed out'], blocked:['b-block','⛔','Blocked'], drained:['b-info','⏸','Drained'],
-  short_circuit:['b-warn','⚡','Breaker open'], denied:['b-block','⛔','Denied'], no_route:['b-error','✖','No route']
-};
-const group = e => (e.outcome === 'upstream_5xx' || e.outcome === 'upstream_down') ? 'error' : e.outcome;
-let logs = [], current = [];
+const icon = (name, cls = 'ic') => `<svg class="${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
-function banner(msg, kind = 'success') {
-  $('alerts').innerHTML = msg ? `<div class="alert alert-${kind} py-2">${esc(msg)}</div>` : '';
-  if (msg && kind === 'success') setTimeout(() => $('alerts').innerHTML = '', 4000);
+// outcome -> label, tone, icon. Tone picks the colour; the icon shape and the word carry the meaning on their own.
+const OUT = {
+  ok:            { label:'Forwarded',      tone:'ok',   icon:'check' },
+  upstream_5xx:  { label:'Upstream error', tone:'err',  icon:'xoct'  },
+  upstream_down: { label:'Unreachable',    tone:'err',  icon:'xoct'  },
+  no_route:      { label:'No route',       tone:'err',  icon:'xoct'  },
+  timeout:       { label:'Timed out',      tone:'warn', icon:'clock' },
+  drained:       { label:'Drained',        tone:'warn', icon:'pause' },
+  short_circuit: { label:'Breaker open',   tone:'warn', icon:'bolt'  },
+  blocked:       { label:'Blocked',        tone:'neu',  icon:'ban'   },
+  denied:        { label:'Denied',         tone:'neu',  icon:'lock'  },
+};
+const out = o => OUT[o] || { label:o, tone:'err', icon:'xoct' };
+const badge = (o, extra = '') => { const d = out(o); return `<span class="st st-${d.tone}">${icon(d.icon)}${esc(d.label)}${extra}</span>`; };
+const FILTERS = [['all','All',null],['ok','Forwarded','check'],['error','Errors','xoct'],['timeout','Timed out','clock'],
+  ['blocked','Blocked','ban'],['drained','Drained','pause'],['short_circuit','Breaker open','bolt'],['denied','Denied','lock']];
+const group = e => (e.outcome === 'upstream_5xx' || e.outcome === 'upstream_down') ? 'error' : e.outcome;
+const ms = v => v == null ? '—' : (Math.abs(v) >= 100 ? Math.round(v) : (+v).toFixed(1));
+
+let logs = [], current = [], health = null, stats = null, config = null;
+let selectedId = null, loaded = false, lastSig = null, failing = false;
+
+/* ---------- feedback ---------- */
+function toast(msg, kind = 'ok') {
+  const ic = { ok:'check', err:'xoct', warn:'clock', neu:'info' }[kind];
+  const el = document.createElement('div');
+  el.className = `banner b-${kind}`;
+  el.innerHTML = `${icon(ic)}<div class="b-body"><p>${esc(msg)}</p></div><button class="btn btn-text b-x" type="button" aria-label="Dismiss">${icon('x')}</button>`;
+  el.querySelector('button').onclick = () => el.remove();
+  $('toasts').appendChild(el);
+  if (kind === 'ok') setTimeout(() => el.remove(), 5000);
 }
-const token = () => localStorage.getItem('me_token') || '';
+const announce = t => { $('announcer').textContent = ''; setTimeout(() => $('announcer').textContent = t, 50); };
+
+/* ---------- API ---------- */
+const token = () => { try { return localStorage.getItem('me_token') || ''; } catch { return ''; } };
+function askToken() {
+  return new Promise(res => {
+    const m = bootstrap.Modal.getOrCreateInstance($('tokenModal')); let done = false;
+    $('tokenForm').onsubmit = ev => { ev.preventDefault(); const t = $('tokenInput').value.trim();
+      try { localStorage.setItem('me_token', t); } catch {} done = true; m.hide(); res(t); };
+    $('tokenModal').addEventListener('hidden.bs.modal', () => { if (!done) res(null); }, { once:true });
+    $('tokenModal').addEventListener('shown.bs.modal', () => $('tokenInput').focus(), { once:true });
+    m.show();
+  });
+}
 async function api(path, opts = {}) {
   const r = await fetch(API + path, opts);
-  if (r.status === 401) { const t = prompt('Admin token:'); if (t) { localStorage.setItem('me_token', t); return api(path, opts); } }
+  if (r.status === 401) {
+    const t = await askToken();
+    if (t) { const h = { ...(opts.headers || {}), authorization:'Bearer ' + t }; return api(path, { ...opts, headers:h }); }
+    throw new Error('the admin token is missing or wrong');
+  }
   if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0, 120));
   return r.json();
 }
-const post = (path, body = {}) => api(path, { method:'POST', headers:{'content-type':'application/json', ...(token() ? {authorization:'Bearer ' + token()} : {})}, body:JSON.stringify(body) });
+const post = (path, body = {}) => api(path, { method:'POST', headers:{ 'content-type':'application/json', ...(token() ? { authorization:'Bearer ' + token() } : {}) }, body:JSON.stringify(body) });
 
+/* ---------- confirm dialog ---------- */
+function confirmDo({ title, body, yes, no, cls }) {
+  return new Promise(res => {
+    $('confirmTitle').textContent = title; $('confirmBody').innerHTML = body;
+    $('confirmYes').textContent = yes; $('confirmNo').textContent = no; $('confirmYes').className = 'btn ' + cls;
+    const m = bootstrap.Modal.getOrCreateInstance($('confirm')); let ok = false;
+    $('confirmYes').onclick = () => { ok = true; m.hide(); };
+    $('confirm').addEventListener('hidden.bs.modal', () => res(ok), { once:true });
+    m.show();
+  });
+}
+
+/* ---------- refresh ---------- */
 async function refresh() {
   try {
     const [l, h, s, c] = await Promise.all([api('/logs.json?limit=500'), api('/health'), api('/stats'), api('/config')]);
-    logs = l; $('sidecarName').textContent = h.sidecar;
-    if ($('alerts').textContent.includes('Cannot reach')) banner('');
-    renderStats(s); renderUpstreams(h); $('cfg').textContent = JSON.stringify(c, null, 2); render();
+    logs = l; health = h; stats = s; config = c; loaded = true;
+    if (failing) { failing = false; $('alerts').innerHTML = ''; announce('Connected to the sidecar again.'); }
+    $('updated').textContent = h.updatedAt || new Date().toLocaleTimeString();
+    const sig = h.upstreams.map(u => `${u.name} ${u.health}${u.drained ? ' drained' : ''}`).join(', ');
+    if (lastSig !== null && sig !== lastSig) announce('Upstream status changed: ' + sig + '.');
+    lastSig = sig;
+    renderAll();
   } catch (e) {
-    banner(`Cannot reach the sidecar at ${API}. Start it, check the address, then press Refresh. (${e.message})`, 'danger');
+    failing = true;
+    $('sidecarState').className = 'st st-err';
+    $('sidecarState').innerHTML = `${icon('xoct')}Can't reach the sidecar`;
+    $('alerts').innerHTML = `<div class="banner b-err" role="alert">${icon('xoct')}<div class="b-body">
+      <div class="b-title">Can't reach the sidecar at <span class="mono">${esc(API)}</span></div>
+      <p>Start it (or check the address), then refresh. ${loaded ? 'The data below is from the last successful update.' : ''} <span class="t2">(${esc(e.message)})</span></p>
+      <div class="b-act"><button class="btn btn-quiet" type="button" onclick="refresh()">${icon('refresh')}Try again</button></div></div></div>`;
+    if (!loaded) renderAll();
   }
 }
-function renderStats(s) {
-  const items = [['Requests',s.requests],['Forwarded OK',s.ok],['Errors',s.upstream_errors],['Timeouts',s.timeouts],['Blocked',s.blocked],['Drained',s.drained]];
-  $('stats').innerHTML = items.map(([k, v]) => `<div class="col-6 col-md-2"><div class="bg-white border rounded p-2"><div class="small text-muted">${k}</div><div class="stat">${v}</div></div></div>`).join('');
+
+function renderAll() { renderStrip(); renderOverview(); renderLog(); renderConfig(); }
+
+/* ---------- strip ---------- */
+function upState(u) {
+  if (u.drained) return { tone:'warn', icon:'pause', word:'Drained' };
+  if (u.health === 'Down') return { tone:'err', icon:'xoct', word:'Down' };
+  return { tone:'ok', icon:'check', word:'Healthy' };
 }
-function renderUpstreams(h) {
-  $('upstreams').innerHTML = h.upstreams.map(u => {
-    const down = u.health === 'Down';
-    return `<div class="col-md-6"><div class="bg-white border rounded p-3">
-      <div class="d-flex justify-content-between align-items-start">
-        <div><strong>${esc(u.name)}</strong><div class="small text-muted">${esc(u.target)}</div></div>
-        <span class="badge badge-status ${down ? 'b-error' : 'b-ok'}">${down ? '✖ Down' : '✔ Healthy'}</span>
+function renderStrip() {
+  if (!health) { return; }
+  if (!failing) {
+    $('sidecarState').className = 'st st-ok';
+    $('sidecarState').innerHTML = `${icon('check')}Sidecar <span class="mono" style="font-weight:500">${esc(health.sidecar)}</span> running`;
+  }
+  $('stripUps').innerHTML = health.upstreams.map(u => { const s = upState(u);
+    return `<span class="u"><b>${esc(u.name)}</b><span class="st st-${s.tone}">${icon(s.icon)}${s.word}</span></span>`; }).join('');
+}
+
+/* ---------- path strip ---------- */
+// reach: how far the request got (1 = sidecar, 2 = upstream). mark: what sits on the sidecar->upstream link.
+function pathModel(outcome, upName, entry) {
+  const t = health?.timeoutMs ?? config?.timeoutMs ?? 2000;
+  const m = {
+    ok:            { reach:2, cap:`Forwarded to ${upName} and back${entry ? ` in ${ms(entry.ms)} ms` : ''}.` },
+    upstream_5xx:  { reach:2, mark:['err','xoct'], cap:`Reached ${upName}, which returned ${entry?.status ?? 'an error'}.` },
+    upstream_down: { reach:1, mark:['err','xoct'], cap:`Stopped between the sidecar and ${upName}: the upstream is unreachable.` },
+    timeout:       { reach:1, mark:['warn','clock'], cap:`No reply from ${upName} within ${t} ms. The sidecar returned a timeout response.` },
+    drained:       { reach:1, mark:['warn','pause'], cap:`Stopped at the sidecar: ${upName} is drained, so nothing is forwarded.` },
+    short_circuit: { reach:1, mark:['warn','bolt'], cap:`Stopped at the sidecar: the circuit breaker for ${upName} is open.` },
+    blocked:       { reach:1, mark:['neu','ban'], cap:'Stopped at the sidecar: this path is blocked by config.' },
+    denied:        { reach:1, mark:['neu','lock'], cap:"Stopped at the sidecar: the caller isn't on the allowlist." },
+    no_route:      { reach:1, mark:['err','xoct'], cap:'Stopped at the sidecar: no upstream matches this path.' },
+  };
+  return m[outcome] || { reach:1, mark:['err','xoct'], cap:'Stopped at the sidecar.' };
+}
+function pathStrip(model, upLabel, { live = false, small = false, caption = true } = {}) {
+  const [tone, ic] = model.mark || [];
+  const capIcon = model.mark ? `<span class="st-${tone}">${icon(ic)}</span>` : `<span class="st-ok">${icon('check')}</span>`;
+  return `<div class="path${small ? ' sm' : ''}" role="img" aria-label="Request path: client, sidecar, ${esc(upLabel)}. ${esc(model.cap)}">
+      <div class="pnode on"><span class="dot"></span><span class="pl">Client</span></div>
+      <div class="plink on${live ? ' live' : ''}"><span class="flow"></span></div>
+      <div class="pnode on"><span class="dot"></span><span class="pl">Sidecar</span></div>
+      <div class="plink${model.reach >= 2 ? ' on' : ''}${live ? ' live' : ''}"><span class="flow"></span>${model.mark ? `<span class="pm st-${tone}">${icon(ic)}</span>` : ''}</div>
+      <div class="pnode${model.reach >= 2 ? ' on' : ''}"><span class="dot"></span><span class="pl">${esc(upLabel)}</span></div>
+    </div>${caption ? `<p class="path-cap" aria-hidden="true">${capIcon}<span>${esc(model.cap)}</span></p>` : ''}`;
+}
+
+/* ---------- overview ---------- */
+function renderOverview() {
+  if (!health) {
+    if (!loaded && failing) { $('upstreams').innerHTML = ''; $('ovSub').textContent = "No data yet. The sidecar hasn't answered."; $('stats').innerHTML = ''; $('recent').innerHTML = ''; }
+    return;
+  }
+  const n = health.upstreams.length;
+  $('ovSub').innerHTML = `Sidecar <span class="mono">${esc(health.sidecar)}</span> forwards to ${n} upstream${n === 1 ? '' : 's'} with a ${health.timeoutMs} ms timeout.`;
+  $('downBanners').innerHTML = health.upstreams.filter(u => u.health === 'Down' && !u.drained).map(u => `
+    <div class="banner b-err" role="alert">${icon('xoct')}<div class="b-body">
+      <div class="b-title">${esc(u.name)} is Down: 3 requests failed in a row.</div>
+      <p>Drain traffic to stop sending requests to it. You can resume once it recovers.</p>
+      <div class="b-act"><button class="btn btn-drain" type="button" data-drain="${esc(u.id)}" data-want="1">${icon('pause')}Drain ${esc(u.name)}</button></div></div></div>`).join('');
+
+  $('upstreams').innerHTML = health.upstreams.length ? health.upstreams.map(u => {
+    const s = upState(u);
+    const model = u.drained ? pathModel('drained', u.name) : u.health === 'Down'
+      ? { reach:1, mark:['err','xoct'], cap:`${u.name} is Down. The sidecar is still sending it requests.` }
+      : { reach:2, cap:`Forwarding to ${u.name}. Requests reach it and come back.` };
+    return `<article class="panel panel-pad ucard" aria-labelledby="un-${esc(u.id)}">
+      <div class="u-head">
+        <div class="t"><h2 id="un-${esc(u.id)}">${esc(u.name)}</h2><div class="u-target mono">${esc(u.target)} · prefix ${esc(u.prefix)}</div></div>
+        <span class="st st-${s.tone} u-status">${icon(s.icon)}${s.word}</span>
       </div>
-      <div class="small mt-2">Avg latency <strong>${u.avgLatencyMs ?? '—'} ms</strong> · last ${u.lastLatencyMs ?? '—'} ms · ${u.requests} requests</div>
-      ${down ? '<div class="small text-danger mt-1">Upstream looks Down (3 failed checks). Consider draining traffic.</div>' : ''}
-      <div class="form-check form-switch mt-2">
+      <div class="metrics">
+        <div class="metric"><div class="big">${ms(u.avgLatencyMs)}<span class="u">ms</span></div><div class="k">Average latency</div></div>
+        <div class="metric"><div class="v">${ms(u.lastLatencyMs)} <span class="t2">ms</span></div><div class="k">Last request</div></div>
+        <div class="metric"><div class="v">${u.requests}</div><div class="k">Requests</div></div>
+      </div>
+      ${pathStrip(model, u.name, { live: !u.drained && u.health !== 'Down' })}
+      <div class="drain-row form-switch">
         <input class="form-check-input drain" type="checkbox" role="switch" id="d-${esc(u.id)}" data-id="${esc(u.id)}" ${u.drained ? 'checked' : ''}>
-        <label class="form-check-label" for="d-${esc(u.id)}">Drain traffic ${u.drained ? '<span class="badge b-info">⏸ drained</span>' : ''}</label>
-      </div></div></div>`;
-  }).join('');
-  document.querySelectorAll('.drain').forEach(el => el.addEventListener('change', async () => {
-    const want = el.checked;
-    if (!confirm(want ? 'Drain this upstream? New requests will not be forwarded.' : 'Resume traffic to this upstream?')) { el.checked = !want; return; }
-    try { await post('/drain', {upstream: el.dataset.id, drained: want});
-          banner(want ? 'Traffic drained. New requests to this upstream are paused.' : 'Traffic resumed. Requests are forwarded again.'); refresh();
-    } catch (e) { el.checked = !want; banner('Could not change drain state: ' + e.message, 'danger'); }
-  }));
+        <label for="d-${esc(u.id)}"><span class="lbl">Drain traffic</span>
+          <span class="sub">${u.drained ? 'On. New requests get 503 “drained” and are not forwarded.' : 'Off. Requests are forwarded.'}</span></label>
+      </div>
+    </article>`; }).join('')
+    : `<div class="panel state">${icon('info')}<div><h3>No upstreams configured</h3><p>Add at least one upstream to <code class="mono">config.json</code> and restart the sidecar.</p></div></div>`;
+
+  document.querySelectorAll('.drain').forEach(el => el.addEventListener('change', () => setDrain(el.dataset.id, el.checked, el)));
+  document.querySelectorAll('[data-drain]').forEach(b => b.onclick = () => setDrain(b.dataset.drain, true));
+
+  const c = stats ? [
+    ['ok','Forwarded', stats.ok], ['upstream_5xx','Errors', stats.upstream_errors], ['timeout','Timed out', stats.timeouts],
+    ['blocked','Blocked', stats.blocked], ['drained','Drained', stats.drained], ['short_circuit','Breaker open', stats.short_circuited]] : [];
+  $('stats').innerHTML = stats ? `<div class="count total"><div class="k">Requests since start</div><div class="n">${stats.requests}</div></div>` +
+    c.map(([o, k, v]) => { const d = out(o); return `<div class="count"><div class="k st-${d.tone}">${icon(d.icon)}<span>${k}</span></div><div class="n">${v ?? 0}</div></div>`; }).join('') : '';
+
+  const latest = logs.slice(0, 5);
+  $('recent').innerHTML = latest.length ? latest.map(e => `<li><a href="#log" data-open="${esc(e.id)}">
+      <span class="stc">${badge(e.outcome)}</span><span class="p">${esc(e.method)} ${esc(e.path)}</span><span class="ms">${ms(e.ms)}<span class="u">ms</span></span></a></li>`).join('')
+    : `<li class="state">${icon('list')}<div><h3>No requests yet</h3><p>Send a GET or POST through the sidecar, or load sample data.</p><button class="btn btn-primary" type="button" data-sample>Load sample data</button></div></li>`;
+  document.querySelectorAll('[data-open]').forEach(a => a.onclick = () => { selectedId = a.dataset.open; });
+  document.querySelectorAll('[data-sample]').forEach(b => b.onclick = loadSample);
 }
-function render() {
-  const q = $('q').value.toLowerCase(), st = $('st').value;
+
+async function setDrain(id, want, el) {
+  const u = health.upstreams.find(x => x.id === id); if (!u) return;
+  if (want) {
+    const ok = await confirmDo({ title:`Drain traffic from ${u.name}?`, cls:'btn-drain', yes:'Drain traffic', no:'Keep forwarding',
+      body:`<p class="mb-2">New requests to <strong>${esc(u.name)}</strong> get 503 “drained” and aren't forwarded until you resume.</p><p class="t2 mb-0">Every drained request still shows in the access log.</p>` });
+    if (!ok) { if (el) el.checked = false; return; }
+  }
+  try {
+    await post('/drain', { upstream:id, drained:want });
+    toast(want ? `Traffic drained. New requests to ${u.name} aren't forwarded.` : `Traffic resumed. ${u.name} is receiving requests again.`);
+    refresh();
+  } catch (e) { if (el) el.checked = !want; toast(`Couldn't change drain for ${u.name}. Nothing changed. (${e.message})`, 'err'); }
+}
+
+/* ---------- access log ---------- */
+$('chips').innerHTML = FILTERS.map(([v, l, ic], i) => `<input type="radio" name="st" id="f-${v}" value="${v}"${i === 0 ? ' checked' : ''}><label for="f-${v}">${ic ? icon(ic) : ''}${l}</label>`).join('');
+const stVal = () => document.querySelector('input[name=st]:checked').value;
+
+function renderLog() {
+  const q = $('q').value.toLowerCase().trim(), st = stVal();
   current = logs.filter(e => (st === 'all' || group(e) === st) &&
     (!q || [e.method, e.path, e.upstream, e.outcome, e.status].join(' ').toLowerCase().includes(q)));
-  $('empty').classList.toggle('d-none', logs.length > 0);
-  $('noresults').classList.toggle('d-none', !(logs.length > 0 && current.length === 0));
-  $('logTable').classList.toggle('d-none', current.length === 0);
   $('count').textContent = current.length;
-  $('rows').innerHTML = current.map((e, i) => {
-    const [cls, icon, label] = OUT[e.outcome] || ['b-error', '✖', e.outcome];
-    return `<tr role="button" tabindex="0" data-i="${i}">
-      <td data-label="Time">${esc(e.ts)}</td><td data-label="Method">${esc(e.method)}</td>
-      <td data-label="Path"><code>${esc(e.path)}</code></td><td data-label="Upstream">${esc(e.upstream ?? '—')}</td>
-      <td data-label="Result"><span class="badge badge-status ${cls}">${icon} ${e.status} ${label}</span></td>
-      <td data-label="Latency" class="text-end">${e.ms} ms</td></tr>`;
-  }).join('');
+
+  let state = '';
+  if (!loaded && !failing) state = `<div class="p-3">${'<div class="sk mb-3"></div>'.repeat(8)}</div>`;
+  else if (!loaded) state = `<div class="state">${icon('xoct')}<div><h3>No log to show</h3><p>The sidecar hasn't answered yet. Start it, then refresh.</p></div></div>`;
+  else if (!logs.length) state = `<div class="state">${icon('list')}<div><h3>No requests yet</h3><p>Send a GET or POST through the sidecar, or load sample data to see how the log reads.</p><button class="btn btn-primary" type="button" data-sample>Load sample data</button></div></div>`;
+  else if (!current.length) state = `<div class="state">${icon('search')}<div><h3>No requests match</h3><p>Nothing matches ${q ? `“${esc(q)}”` : 'this search'}${st !== 'all' ? ` with outcome ${esc(FILTERS.find(f => f[0] === st)[1])}` : ''}.</p><button class="btn btn-quiet" type="button" id="clearF">Clear filters</button></div></div>`;
+  $('logState').innerHTML = state;
+  $('tblWrap').hidden = !!state;
+  document.querySelectorAll('#logState [data-sample]').forEach(b => b.onclick = loadSample);
+  if ($('clearF')) $('clearF').onclick = clearFilters;
+
+  const focusedId = document.activeElement?.closest?.('#rows tr')?.dataset.id;
+  $('rows').innerHTML = current.map((e, i) => `<tr tabindex="0" data-i="${i}" data-id="${esc(e.id)}" aria-selected="${e.id === selectedId}">
+      <td class="c-time">${esc(e.ts)}</td><td class="c-method mono">${esc(e.method)}</td>
+      <td class="c-path" data-m="${esc(e.method)}" title="${esc(e.path)}">${esc(e.path)}</td>
+      <td class="c-status c-num${e.status >= 500 ? ' s5' : ''}">${e.status}</td>
+      <td class="c-out">${badge(e.outcome)}</td>
+      <td class="c-ms">${ms(e.ms)}<span class="u">ms</span></td>
+      <td class="c-meta mono">${e.status} · ${esc(e.upstream ?? 'no upstream')} · ${esc(e.ts)}</td></tr>`).join('');
   document.querySelectorAll('#rows tr').forEach(tr => {
-    const open = () => showDetail(current[+tr.dataset.i]);
+    const open = () => select(current[+tr.dataset.i], true);
     tr.addEventListener('click', open);
-    tr.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); } });
+    tr.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); tr.nextElementSibling?.focus(); }
+      if (ev.key === 'ArrowUp') { ev.preventDefault(); tr.previousElementSibling?.focus(); }
+    });
   });
+  if (focusedId) document.querySelector(`#rows tr[data-id="${CSS.escape(focusedId)}"]`)?.focus();
+  renderDetail();
 }
-function showDetail(e) {
-  const [, icon, label] = OUT[e.outcome] || ['', '✖', e.outcome];
-  $('detailBody').innerHTML = `<dl class="row mb-3">
-    <dt class="col-4">Request</dt><dd class="col-8"><code>${esc(e.method)} ${esc(e.path)}</code></dd>
-    <dt class="col-4">Result</dt><dd class="col-8">${icon} ${e.status} ${label}</dd>
-    <dt class="col-4">Latency</dt><dd class="col-8">${e.ms} ms</dd>
-    <dt class="col-4">Upstream</dt><dd class="col-8">${esc(e.upstream ?? '—')}</dd>
-    <dt class="col-4">Breaker</dt><dd class="col-8">${esc(e.breaker)}</dd>
-    <dt class="col-4">Caller (mTLS)</dt><dd class="col-8">${esc(e.caller ?? '—')}</dd>
-    <dt class="col-4">Request ID</dt><dd class="col-8"><code>${esc(e.id)}</code></dd>
-    <dt class="col-4">Error</dt><dd class="col-8">${esc(e.error ?? 'none')}</dd></dl>
-    <h3 class="h6">Request headers</h3><pre class="bg-light border rounded p-2 small mb-0">${esc(JSON.stringify(e.headers || {}, null, 2))}</pre>`;
-  bootstrap.Modal.getOrCreateInstance($('detail')).show();
+
+function select(e, fromUser) {
+  selectedId = e.id;
+  document.querySelectorAll('#rows tr').forEach(tr => tr.setAttribute('aria-selected', tr.dataset.id === selectedId));
+  renderDetail();
+  if (fromUser && window.matchMedia('(max-width: 767.98px)').matches) bootstrap.Offcanvas.getOrCreateInstance($('detailSheet')).show();
 }
+function step(d) {
+  const i = current.findIndex(e => e.id === selectedId); const n = current[i + d];
+  if (n) { select(n, false); document.querySelector(`#rows tr[data-id="${CSS.escape(n.id)}"]`)?.scrollIntoView({ block:'nearest' }); }
+}
+function renderDetail() {
+  const e = logs.find(x => x.id === selectedId);
+  let html;
+  if (!e) {
+    html = selectedId
+      ? `<div class="state">${icon('info')}<div><h3>This entry is no longer in the log</h3><p>It may have been cleared or reset.</p></div></div>`
+      : `<div class="state">${icon('list')}<div><h3>Request detail</h3><p>Select a request to see where it stopped, its headers and any error.</p></div></div>`;
+  } else {
+    const upName = health?.upstreams.find(u => u.id === e.upstream)?.name || e.upstream || 'Upstream';
+    const i = current.findIndex(x => x.id === e.id);
+    html = `<div class="dt-head">
+        <div class="row1">${badge(e.outcome)}<div class="big" style="font-size:1.5rem">${ms(e.ms)}<span class="u">ms</span></div></div>
+        <div class="req">${esc(e.method)} ${esc(e.path)}</div>
+        ${pathStrip(pathModel(e.outcome, upName, e), upName, { small:true })}
+      </div>
+      <div class="dt-body">
+        <dl class="dl">
+          <dt>Status</dt><dd class="mono${e.status >= 500 ? ' st-err' : ''}">${e.status}</dd>
+          <dt>Upstream</dt><dd>${esc(upName)}</dd>
+          <dt>Time</dt><dd class="mono">${esc(e.ts)}</dd>
+          <dt>Breaker</dt><dd class="mono">${esc(e.breaker)}</dd>
+          <dt>Caller (mTLS)</dt><dd>${esc(e.caller ?? '—')}</dd>
+          <dt>Request ID</dt><dd><code>${esc(e.id)}</code></dd>
+          <dt>Error</dt><dd>${e.error ? `<span class="st-${out(e.outcome).tone}">${esc(e.error)}</span>` : 'None'}</dd>
+        </dl>
+        <div class="d-flex align-items-center"><h3 class="me-auto">Request headers</h3>
+          <button class="btn btn-text" type="button" data-copy style="min-height:36px">${icon('copy')}Copy</button></div>
+        <pre class="codeblock" id="hdrs">${esc(JSON.stringify(e.headers || {}, null, 2))}</pre>
+      </div>
+      <div class="dt-nav">
+        <button class="btn btn-quiet" type="button" data-step="-1" ${i <= 0 ? 'disabled' : ''}>${icon('up')}Newer</button>
+        <button class="btn btn-quiet" type="button" data-step="1" ${i < 0 || i >= current.length - 1 ? 'disabled' : ''}>${icon('down')}Older</button>
+      </div>`;
+  }
+  for (const box of [$('detailPane'), $('sheetBody')]) {
+    box.innerHTML = html;
+    box.querySelectorAll('[data-step]').forEach(b => b.onclick = () => step(+b.dataset.step));
+    box.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+      try { await navigator.clipboard.writeText(box.querySelector('#hdrs').textContent); toast('Headers copied.'); }
+      catch { toast("Couldn't copy. Select the headers and copy them by hand.", 'warn'); }
+    });
+  }
+}
+function clearFilters() { $('q').value = ''; $('f-all').checked = true; renderLog(); $('q').focus(); }
+
+/* ---------- config ---------- */
+function renderConfig() {
+  if (!config) { if (failing && !loaded) $('cfg').innerHTML = `<div class="panel state wide">${icon('xoct')}<div><h3>Config couldn't be read</h3><p>The sidecar hasn't answered. Start it, then refresh.</p></div></div>`; return; }
+  const bp = config.blockedPaths || [];
+  const hits = p => logs.filter(e => e.outcome === 'blocked' && (e.path === p || e.path.startsWith(p.replace(/\/$/, '') + '/'))).length;
+  $('cfg').innerHTML = `
+    <div class="panel panel-pad">
+      <h2>Timeout</h2>
+      <div class="big mt-3">${config.timeoutMs}<span class="u">ms</span></div>
+      <p class="t2 mt-2 mb-0">A request that gets no reply in this time is answered with a timeout response and logged as ${badge('timeout')}.</p>
+    </div>
+    <div class="panel panel-pad">
+      <h2>Blocked paths</h2>
+      ${bp.length ? `<ul class="kv mt-2">${bp.map(p => `<li><span class="st st-neu">${icon('ban')}</span><code>${esc(p)}</code><span class="ms-auto t2 small-t">${hits(p)} blocked in this log</span></li>`).join('')}</ul>
+        <p class="t2 mt-2 mb-0 small-t">Matching requests get 403 and are never forwarded. Sub-paths are blocked too.</p>`
+        : `<p class="t2 mt-2 mb-0">No blocked paths. Every path is forwarded.</p>`}
+    </div>
+    <div class="panel panel-pad wide">
+      <h2>Upstreams</h2>
+      <div class="tbl-wrap mt-2"><table class="log" style="cursor:default"><thead><tr><th>Name</th><th>Prefix</th><th>Target</th><th>Traffic</th></tr></thead><tbody>
+        ${config.upstreams.map(u => `<tr style="cursor:default"><td style="font-weight:600">${esc(u.name)}</td><td class="mono">${esc(u.prefix)}</td><td class="mono">${esc(u.target)}</td>
+          <td>${u.drained ? `<span class="st st-warn">${icon('pause')}Drained</span>` : `<span class="st st-ok">${icon('play')}Forwarding</span>`}</td></tr>`).join('')}
+      </tbody></table></div>
+      <ul class="kv mt-3"><li>${icon('lock')}<span>Admin token ${config.tokenRequired ? '<strong>required</strong> for drain, reset and clear.' : '<strong>not set</strong>. Anyone who can reach the admin API can drain.'}</span></li></ul>
+      <details class="raw mt-2"><summary>Show raw config</summary><pre class="codeblock">${esc(JSON.stringify(config, null, 2))}</pre></details>
+    </div>`;
+}
+
+/* ---------- about ---------- */
+(function renderAbout() {
+  const t = '2000';
+  const items = [
+    ['How forwarding works', 'GET and POST requests come in on the sidecar, which picks an upstream by path prefix and forwards them with a timeout. The response comes back unchanged, and every request is logged with method, path, status and latency.', 'ok', 'Payments'],
+    ['Timeouts', `If the upstream doesn't reply within the configured timeout (${t} ms by default), the sidecar stops waiting, answers with a timeout response, and logs the request as Timed out. It is never hidden from the log.`, 'timeout', 'Payments'],
+    ['Blocked paths', 'Paths listed in blockedPaths are refused with 403 at the sidecar. They never reach an upstream, and each attempt is logged as Blocked.', 'blocked', 'Upstream'],
+    ['Draining traffic', 'Draining is a manual switch per upstream. While it is on, new requests get 503 “drained” and are logged as Drained. Turn it off to resume. The phone app has the same switch.', 'drained', 'Orders'],
+  ];
+  $('aboutGrid').innerHTML = items.map(([h, p, o, up]) => `<article class="panel panel-pad"><h2>${h}</h2><p>${p}</p>${pathStrip(pathModel(o, up, o === 'ok' ? { ms: 12.4 } : null), up)}</article>`).join('') +
+    `<article class="panel panel-pad"><h2>Healthy or Down</h2><p>An upstream shows <span class="st st-err">${icon('xoct')}Down</span> after 3 failed requests in a row (errors, timeouts or unreachable). The next successful request brings it back to <span class="st st-ok">${icon('check')}Healthy</span>. There is no separate health probe.</p></article>
+     <article class="panel panel-pad"><h2>Beyond the PRD</h2><p>The repo also includes an optional demo of mTLS between two sidecars and a circuit breaker (<span class="st st-warn">${icon('bolt')}Breaker open</span>). They are there to learn from. They are not production security or routing.</p></article>`;
+})();
+
+/* ---------- routing ---------- */
+const VIEWS = ['overview', 'log', 'config', 'about'];
+function route(focus) {
+  const v = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview';
+  document.querySelectorAll('main section[data-view]').forEach(s => s.hidden = s.dataset.view !== v);
+  document.querySelectorAll('a[data-view]').forEach(a => a.dataset.view === v ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
+  document.title = `${{ overview:'Overview', log:'Access log', config:'Config', about:'About' }[v]} · Mini Envoy`;
+  if (v === 'log') renderDetail();
+  if (focus) { window.scrollTo(0, 0); $('h-' + v).focus({ preventScroll:true }); }
+}
+window.addEventListener('hashchange', () => route(true));
+
+/* ---------- wiring ---------- */
 $('refresh').onclick = refresh;
-$('q').oninput = $('st').onchange = render;
-$('resetFilters').onclick = () => { $('q').value = ''; $('st').value = 'all'; render(); };
-$('export').onclick = () => { const p = new URLSearchParams({q: $('q').value, status: $('st').value});
-  const a = Object.assign(document.createElement('a'), {href: API + '/logs.csv?' + p}); document.body.appendChild(a); a.click(); a.remove(); banner('CSV export started.'); };
-const loadSample = async () => { try { await post('/reset-sample'); banner('Sample data loaded.'); refresh(); } catch (e) { banner('Could not load sample data: ' + e.message, 'danger'); } };
-$('loadSample').onclick = $('resetSample').onclick = loadSample;
-$('clearLog').onclick = async () => { if (!confirm('Clear the whole log?')) return; try { await post('/clear-log'); banner('Log cleared.'); refresh(); } catch (e) { banner(e.message, 'danger'); } };
-setInterval(() => { if ($('auto').checked && !document.querySelector('.modal.show')) refresh(); }, 2000);
-refresh();
+$('q').oninput = renderLog;
+$('chips').addEventListener('change', renderLog);
+$('export').onclick = () => { const p = new URLSearchParams({ q:$('q').value, status:stVal() });
+  const a = Object.assign(document.createElement('a'), { href:API + '/logs.csv?' + p }); document.body.appendChild(a); a.click(); a.remove();
+  toast(`CSV export started: ${current.length} rows that match your filters.`); };
+async function loadSample() { try { await post('/reset-sample'); toast('Sample data loaded.'); refresh(); } catch (e) { toast(`Couldn't load sample data. (${e.message})`, 'err'); } }
+$('resetSample').onclick = loadSample;
+$('clearLog').onclick = async () => {
+  const ok = await confirmDo({ title:'Clear the whole log?', cls:'btn-destroy', yes:'Clear log', no:'Keep log',
+    body:`<p class="mb-0">This removes all ${logs.length} entries from the log file. It can't be undone, but you can load sample data again.</p>` });
+  if (!ok) return;
+  try { await post('/clear-log'); selectedId = null; toast('Log cleared.'); refresh(); } catch (e) { toast(`Couldn't clear the log. (${e.message})`, 'err'); }
+};
+setInterval(() => { if ($('auto').checked && !document.querySelector('.modal.show') && !document.hidden) refresh(); }, 2000);
+route(false); renderLog(); refresh();
 </script>
 </body>
 </html>
