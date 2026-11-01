@@ -17,6 +17,10 @@
   .b-info { background:#E0F2FE; color:#075985; border:1px solid #075985; }
   .stat { font-size:1.4rem; font-weight:700; }
   tr[role=button] { cursor:pointer; }
+  /* keyboard users must always see where focus is */
+  tr[role=button]:focus-visible, .btn:focus-visible, .form-check-input:focus-visible { outline:3px solid #1F2937; outline-offset:2px; }
+  .nav-sub { color:#CCFBF1; } /* light teal on #0F766E = about 5:1 contrast (text-white-50 was about 2.5:1) */
+  .demo-pill { background:#FEF0C7; color:#7A2E0E; border:1px solid #7A2E0E; }
   /* phone width: stack each log row as a card (the PRD asks for stacked cards on phones) */
   @media (max-width: 575.98px) {
     table.log thead { display:none; }
@@ -29,12 +33,16 @@
 <body>
 <nav class="navbar navbar-dark mb-3">
   <div class="container-xl">
-    <span class="navbar-brand mb-0 h1">Mini Envoy <small class="opacity-75 fs-6">sidecar log view</small></span>
-    <span id="sidecarName" class="text-white-50 small"></span>
+    <span class="navbar-brand mb-0 h1">Mini Envoy <small class="nav-sub fs-6">sidecar log view</small></span>
+    <span>
+      <span id="demoPill" class="badge demo-pill d-none">DEMO · sample data</span>
+      <span id="sidecarName" class="nav-sub small ms-2"></span>
+    </span>
   </div>
 </nav>
 
 <main class="container-xl pb-5">
+  <div id="demoBanner" class="alert alert-warning py-2 d-none" role="status"></div>
   <div id="alerts" role="status" aria-live="polite"></div>
 
   <!-- overview -->
@@ -130,7 +138,34 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 // Same page works served by the sidecar (/__sidecar/logs) or as a static page: index.html?api=http://HOST:8001/__sidecar
-const API = new URLSearchParams(location.search).get('api') || '/__sidecar';
+const params = new URLSearchParams(location.search);
+const API = params.get('api') || '/__sidecar';
+// DEMO MODE: ?demo=1 forces it; otherwise it switches on automatically when the sidecar can't be reached
+// (for example on GitHub Pages, where there is no Python backend). Nothing here talks to a server.
+const FORCE_DEMO = params.get('demo') === '1';
+let demo = FORCE_DEMO;
+const SAMPLE = [  // same fields the sidecar's /logs.json returns
+  ['10:15:31','GET','/balance','payments',200,'ok',11.2],
+  ['10:15:29','POST','/charge','payments',200,'ok',14.8],
+  ['10:15:26','GET','/orders/list','orders',200,'ok',9.4],
+  ['10:15:22','GET','/admin','',403,'blocked',0.6],
+  ['10:15:18','GET','/slow','payments',504,'timeout',2001.3],
+  ['10:15:14','GET','/orders/list','orders',503,'drained',0.5],
+  ['10:15:10','GET','/balance','payments',502,'upstream_down',4.1],
+  ['10:15:07','GET','/internal/metrics','',403,'blocked',0.4],
+  ['10:15:03','GET','/orders/42','orders',200,'ok',10.7],
+  ['10:15:01','GET','/balance','payments',200,'ok',12.0],
+].map(([ts, method, path, upstream, status, outcome, ms], i) => ({ ts, method, path, upstream: upstream || null, status, outcome, ms,
+  breaker: 'CLOSED', id: 'demo' + (i + 1), caller: null, error: outcome === 'ok' ? null : outcome.replace('_', ' '),
+  headers: { host: 'localhost:8001', 'user-agent': 'curl/8.5' } }));
+const DEMO = {
+  logs: SAMPLE.slice(),
+  upstreams: [
+    { id:'payments', name:'Payments', target:'http://127.0.0.1:9000', health:'Healthy', drained:false, avgLatencyMs:12.4, lastLatencyMs:11.2 },
+    { id:'orders', name:'Orders', target:'http://127.0.0.1:9001', health:'Healthy', drained:true, avgLatencyMs:10.1, lastLatencyMs:9.4 },
+  ],
+  config: { timeoutMs: 2000, blockedPaths: ['/admin', '/internal'], note: 'demo mode: built-in sample data, no backend' },
+};
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const OUT = {   // outcome -> [badge class, icon, label]; icon + text so status never relies on colour alone
@@ -152,17 +187,53 @@ async function api(path, opts = {}) {
   if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0, 120));
   return r.json();
 }
-const post = (path, body = {}) => api(path, { method:'POST', headers:{'content-type':'application/json', ...(token() ? {authorization:'Bearer ' + token()} : {})}, body:JSON.stringify(body) });
+const post = (path, body = {}) => demo ? demoPost(path, body)
+  : api(path, { method:'POST', headers:{'content-type':'application/json', ...(token() ? {authorization:'Bearer ' + token()} : {})}, body:JSON.stringify(body) });
+
+// In demo mode the buttons change local sample data instead of calling the sidecar.
+async function demoPost(path, body) {
+  if (path === '/drain') {
+    const u = DEMO.upstreams.find(x => x.id === body.upstream);
+    u.drained = body.drained;
+    if (u.drained) DEMO.logs.unshift({ ...SAMPLE[5], ts: new Date().toLocaleTimeString('en-GB'), path: u.id === 'orders' ? '/orders/list' : '/balance',
+      upstream: u.id, id: 'demo' + Date.now() });  // show what a drained request looks like
+  }
+  if (path === '/reset-sample') DEMO.logs = SAMPLE.slice();
+  if (path === '/clear-log') DEMO.logs = [];
+  return {};
+}
+const demoStats = () => {
+  const n = o => DEMO.logs.filter(e => e.outcome === o).length;
+  return { requests: DEMO.logs.length, ok: n('ok'), upstream_errors: n('upstream_5xx') + n('upstream_down'), timeouts: n('timeout'), blocked: n('blocked'), drained: n('drained') };
+};
+function setDemo(on, why) {
+  demo = on;
+  $('demoPill').classList.toggle('d-none', !on);
+  $('demoBanner').classList.toggle('d-none', !on);
+  if (on) $('demoBanner').textContent = why;
+}
+function renderDemo() {
+  logs = DEMO.logs; $('sidecarName').textContent = 'no backend';
+  const reqs = id => DEMO.logs.filter(e => e.upstream === id).length;
+  renderStats(demoStats());
+  renderUpstreams({ upstreams: DEMO.upstreams.map(u => ({ ...u, requests: reqs(u.id) })) });
+  $('cfg').textContent = JSON.stringify(DEMO.config, null, 2); render();
+}
 
 async function refresh() {
-  try {
-    const [l, h, s, c] = await Promise.all([api('/logs.json?limit=500'), api('/health'), api('/stats'), api('/config')]);
-    logs = l; $('sidecarName').textContent = h.sidecar;
-    if ($('alerts').textContent.includes('Cannot reach')) banner('');
-    renderStats(s); renderUpstreams(h); $('cfg').textContent = JSON.stringify(c, null, 2); render();
-  } catch (e) {
-    banner(`Cannot reach the sidecar at ${API}. Start it, check the address, then press Refresh. (${e.message})`, 'danger');
+  if (!FORCE_DEMO) {
+    try {
+      const [l, h, s, c] = await Promise.all([api('/logs.json?limit=500'), api('/health'), api('/stats'), api('/config')]);
+      if (demo) { setDemo(false); banner('Connected to the sidecar. Showing live data.'); }
+      logs = l; $('sidecarName').textContent = h.sidecar;
+      renderStats(s); renderUpstreams(h); $('cfg').textContent = JSON.stringify(c, null, 2); render();
+      return;
+    } catch (e) {
+      const why = /^\d{3}/.test(e.message) ? 'HTTP ' + e.message.slice(0, 3) : e.message;
+      if (!demo) setDemo(true, `Demo mode: can't reach the sidecar at ${API} (${why}), so this page shows built-in sample data. Start the sidecar and it switches to live data automatically.`);
+    }
   }
+  renderDemo();
 }
 function renderStats(s) {
   const items = [['Requests',s.requests],['Forwarded OK',s.ok],['Errors',s.upstream_errors],['Timeouts',s.timeouts],['Blocked',s.blocked],['Drained',s.drained]];
@@ -230,8 +301,16 @@ function showDetail(e) {
 $('refresh').onclick = refresh;
 $('q').oninput = $('st').onchange = render;
 $('resetFilters').onclick = () => { $('q').value = ''; $('st').value = 'all'; render(); };
-$('export').onclick = () => { const p = new URLSearchParams({q: $('q').value, status: $('st').value});
-  const a = Object.assign(document.createElement('a'), {href: API + '/logs.csv?' + p}); document.body.appendChild(a); a.click(); a.remove(); banner('CSV export started.'); };
+$('export').onclick = () => {
+  let href, download = '';
+  if (demo) {  // no backend: build the CSV in the browser from the rows currently shown
+    const cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = ['time,method,path,upstream,status,outcome,latency_ms',
+      ...current.map(e => [e.ts, e.method, e.path, e.upstream, e.status, e.outcome, e.ms].map(cell).join(','))].join('\n');
+    href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); download = 'mini-envoy-log-demo.csv';
+  } else href = API + '/logs.csv?' + new URLSearchParams({q: $('q').value, status: $('st').value});
+  const a = Object.assign(document.createElement('a'), {href, download}); document.body.appendChild(a); a.click(); a.remove(); banner('CSV export started.'); };
+if (FORCE_DEMO) setDemo(true, 'Demo mode (?demo=1): this page shows built-in sample data. Drain, clear and reset only change this browser tab.');
 const loadSample = async () => { try { await post('/reset-sample'); banner('Sample data loaded.'); refresh(); } catch (e) { banner('Could not load sample data: ' + e.message, 'danger'); } };
 $('loadSample').onclick = $('resetSample').onclick = loadSample;
 $('clearLog').onclick = async () => { if (!confirm('Clear the whole log?')) return; try { await post('/clear-log'); banner('Log cleared.'); refresh(); } catch (e) { banner(e.message, 'danger'); } };
