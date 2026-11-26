@@ -58,3 +58,9 @@ python test_mesh.py    # 16 bonus checks: mTLS, rogue CA rejected, no plaintext 
 
 ## Screenshots
 Laptop width: `sample_data/log-view-laptop.png`. Phone width: `sample_data/log-view-phone.png`.
+
+## Live demo (GitHub Pages)
+
+The log view in `ui/` is deployed as a static page: https://apexxx01.github.io/service-mesh-sidecar-proxy/
+
+There is no sidecar behind it, so it runs in demo mode on built-in sample data (the banner says so). Run the sidecar locally to see live data.
