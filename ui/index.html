@@ -317,5 +317,52 @@ $('clearLog').onclick = async () => { if (!confirm('Clear the whole log?')) retu
 setInterval(() => { if ($('auto').checked && !document.querySelector('.modal.show')) refresh(); }, 2000);
 refresh();
 </script>
+<!-- Ask Mini Envoy: small AI assistant. The API key is typed in by the user and kept in sessionStorage only; it is never stored in this repo. -->
+<style>
+#aiBtn{position:fixed;right:20px;bottom:20px;z-index:2000;border-radius:999px;padding:12px 18px;background:#0F766E;color:#fff;border:0;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.2)}
+#aiBox{position:fixed;right:20px;bottom:80px;z-index:2000;width:min(380px,calc(100vw - 40px));height:480px;background:#fff;border:1px solid #CBD5E1;border-radius:14px;display:none;flex-direction:column;box-shadow:0 12px 32px rgba(0,0,0,.25);overflow:hidden}
+#aiBox header{background:#0F766E;color:#fff;padding:10px 14px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+#aiMsgs{flex:1;overflow:auto;padding:12px;font-size:14px;background:#F8FAFC}
+.aiM{margin:6px 0;padding:8px 10px;border-radius:10px;max-width:88%;white-space:pre-wrap;line-height:1.4}
+.aiU{background:#0F766E;color:#fff;margin-left:auto}.aiA{background:#fff;border:1px solid #E2E8F0;color:#1F2937}
+#aiForm{display:flex;gap:6px;padding:8px;border-top:1px solid #E2E8F0}#aiForm input{flex:1}
+</style>
+<button id="aiBtn" aria-controls="aiBox" aria-expanded="false">💬 Ask Mini Envoy</button>
+<div id="aiBox" role="dialog" aria-label="Ask Mini Envoy assistant">
+  <header><span>Ask Mini Envoy (AI)</span><button class="btn btn-sm btn-light" id="aiKeyBtn" title="Set API key">🔑 Key</button></header>
+  <div id="aiMsgs" aria-live="polite"></div>
+  <form id="aiForm"><input id="aiIn" class="form-control form-control-sm" placeholder="e.g. What happens when a service is drained?" aria-label="Your question"><button class="btn btn-sm btn-success">Send</button></form>
+</div>
+<script>
+(() => {
+  const SYS = `You are the assistant for "Mini Envoy", an educational service-mesh sidecar proxy built by Shridhar H Raikar (backend, tests) and J Nishanth Reddy (Expo phone app, wireframes, demo mode) for the Polaris OJT (project PST_AD_168, mentor Madhushri Tangali). Answer briefly and only from these facts; say so if something is not covered.
+Facts: Python 3 + asyncio + aiohttp sidecar on :8001 in front of mock services Payments (:9000, prefix "/") and Orders (:9001, prefix "/orders"); routing is longest-prefix match. Decision order per request: allowlist (only with the mTLS bonus) -> blocked path (/admin, /internal) returns 403 and is never forwarded -> no route 404 -> drained upstream returns 503 "drained" -> circuit breaker open returns 503 (bonus) -> forward with a 2000 ms timeout: 504 if too slow, 502 if unreachable. Every request is logged (time, method, path, upstream, status, outcome, latency) to a JSONL file that survives restarts; authorization and cookie headers are stripped from logs. Health is passive: 3 consecutive failures (5xx, timeout, unreachable; 4xx is not a failure) mark a service Down; after a 5 s cooldown one trial request is allowed (half-open); success makes it Healthy. Admin API under /__sidecar: health, stats, config, logs, logs.json, logs.csv, POST drain (bearer token required). Data structures: deque(maxlen=20) latency sliding window, deque(maxlen=500) recent log, dict counters, finite state machine breaker. aiohttp chosen over http.server because http.server handles one request at a time so a slow upstream would block everyone. Log view: Bootstrap 5, table on laptop, cards on phone, search, status filter, CSV export, demo mode with sample data when no sidecar is reachable (this GitHub Pages copy runs in demo mode because Pages is static). 29 automated checks in test_prd.py, all passing; 16 bonus checks for mTLS 1.3 and the circuit breaker. Limits: not real Envoy, no service discovery or load balancing, passive health only.`;
+  const $ = id => document.getElementById(id), msgs = $('aiMsgs'), hist = [];
+  const getKey = () => { try { return sessionStorage.getItem('aiKey') || ''; } catch { return ''; } };
+  const setKey = () => { const k = prompt('Paste your Gemini API key (kept in this browser tab only):', getKey()); if (k !== null) { try { sessionStorage.setItem('aiKey', k.trim()); } catch {} } };
+  const add = (t, who) => { const d = document.createElement('div'); d.className = 'aiM ' + (who === 'u' ? 'aiU' : 'aiA'); d.textContent = t; msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight; return d; };
+  $('aiBtn').onclick = () => { const b = $('aiBox'), open = b.style.display !== 'flex'; b.style.display = open ? 'flex' : 'none'; $('aiBtn').setAttribute('aria-expanded', open);
+    if (open && !msgs.children.length) add('Hi! Ask me anything about Mini Envoy: how requests are decided, health checks, the log view, or the tech stack.', 'a'); if (open) $('aiIn').focus(); };
+  $('aiKeyBtn').onclick = setKey;
+  const URLS = k => [
+    `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(k)}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(k)}`];
+  async function ask(q) {
+    let k = getKey(); if (!k) { setKey(); k = getKey(); } if (!k) return 'Set an API key with the 🔑 button first.';
+    hist.push({ role: 'user', parts: [{ text: q }] });
+    const body = JSON.stringify({ systemInstruction: { parts: [{ text: SYS }] }, contents: hist.slice(-10), generationConfig: { maxOutputTokens: 400, temperature: 0.3 } });
+    let last = 'request failed';
+    for (const u of URLS(k)) {
+      try { const r = await fetch(u, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+        const j = await r.json(); const t = j?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') ;
+        if (r.ok && t) { hist.push({ role: 'model', parts: [{ text: t }] }); return t; }
+        last = j?.error?.message || `HTTP ${r.status}`; } catch (e) { last = e.message; }
+    }
+    hist.pop(); return 'Sorry, the AI service could not answer: ' + last;
+  }
+  $('aiForm').onsubmit = async e => { e.preventDefault(); const q = $('aiIn').value.trim(); if (!q) return; $('aiIn').value = ''; add(q, 'u');
+    const w = add('Thinking…', 'a'); w.textContent = await ask(q); msgs.scrollTop = msgs.scrollHeight; };
+})();
+</script>
 </body>
 </html>
