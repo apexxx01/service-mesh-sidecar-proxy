@@ -345,8 +345,8 @@ Facts: Python 3 + asyncio + aiohttp sidecar on :8001 in front of mock services P
     if (open && !msgs.children.length) add('Hi! Ask me anything about Mini Envoy: how requests are decided, health checks, the log view, or the tech stack.', 'a'); if (open) $('aiIn').focus(); };
   $('aiKeyBtn').onclick = setKey;
   const URLS = k => [
-    `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(k)}`,
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(k)}`];
+    `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(k)}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(k)}`];
   async function ask(q) {
     let k = getKey(); if (!k) { setKey(); k = getKey(); } if (!k) return 'Set an API key with the 🔑 button first.';
     hist.push({ role: 'user', parts: [{ text: q }] });
